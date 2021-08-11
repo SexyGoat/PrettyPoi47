@@ -57,7 +57,7 @@ all: ${HEX_FILE}
 
 ${HEX_FILE}: ${MAIN_STEM}.asm $(wildcard *.inc) $(wildcard *.h)
 	${ASM} -o ${HEX_FILE} ${MAIN_STEM}.asm
-	@echo "✅ Hex file" '"'"${HEX_FILE}"'"' "is ready to burn"\
+	@echo "Hex file" '"'"${HEX_FILE}"'"' "is ready to burn"\
 		"(with" '"make burn"'")."
 
 burn: ${HEX_FILE}

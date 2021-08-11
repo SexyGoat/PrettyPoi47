@@ -22,7 +22,21 @@ along with PrettyPoi47.
 
 
 -------------------------------------------------------------------------------
-Building the Hex Files
+Introduction
+-------------------------------------------------------------------------------
+
+
+PrettyPoi47 is basically PrettyPoi27 enhanced to make use of the extra Program
+Memory on the PIC16F1847 on the later variants of the Ninja Poi. Lots of weird
+technical design decisions intended to save space on the smaller PIC16F1827 no
+longer apply. One feature enchancement is the user-selectable option to prevent
+the addition of a new entry to a full Favouite Patterns list.
+
+[In development: Two independent colour ramps instead of a selection of pairs]
+
+
+-------------------------------------------------------------------------------
+Building the Hex File
 -------------------------------------------------------------------------------
 
 
@@ -32,12 +46,15 @@ a macro assembler, and the header files for Microchip's PIC series of chips.
 Both gpasm and the header files are in the Ubuntu "gputils" package.
 (You may need to install "build-essential" and "libusb++-dev".)
 
-The makefile for ShinyPoi is set up to assemble for the PIC16F1847 chip:
+The makefile for PrettyPoi47 is set up to assemble for the PIC16F1847 chip:
 
-  make shiny47.hex
+  make prettypoi.hex
+
+or just
+
   make all
 
-You may want to inspect the pin assignment in shinypoi.asm is correct for
+You may want to inspect the pin assignment in prettypoi.asm is correct for
 the poi you have.
 
 
@@ -62,14 +79,9 @@ The pk2cmd can be tested by using the autodetect feature:
 You may need to add yourself to the "dialout" group so you can access the
 PicKit2 USB programmer.
 
-To program the PIC16F1827 or the PIC16F1847 chip, issue the appropriate
-makefile command:
+To program the PIC16F1827 or the PIC16F1847 chip, issue the makefile command:
 
-  make burn27
-
-      or
-
-  make burn47
+  make burn
 
 An ugly quirk of pk2cmd is its requirement for an absolute pathname for
 a hex file. The makefile uses the ${CURDIR} construct to deal with that.
