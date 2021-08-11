@@ -1,0 +1,45 @@
+THE MENU SYSTEM
+
+The items of most of the menus are selected by the duration of a button press.
+The options within the submenus within the Power-On Menu are each cycled with
+the Pattern Button and selected with the Mode Button.
+
+
+Power-On Menu:
+  Grey:     Switch on.
+  Magenta:  Select colour ramp pairs for patterns in Banks 8 and 9.
+  Blue:     Select LED intensity.
+  Amber:    Enable or disable the updating of the Last Used Pattern memory:
+    Sea Green (2 distal LEDs): Selecting a pattern updates the LUP memory.
+    Red (2 proximal LEDs): The LUP memory is locked.
+  Red:      Set restriction level:
+    Green (3 LEDs):           No restrictions.
+    Blue (3 LEDs):            A full Favourites list blocks new entries.
+    Amber (2 proximal LEDs):  Favourites list locked.
+    Red (1 proximal LED):     Favourites list locked, bank selection disabled.
+  Test pattern: Switch on.
+
+Mode Button:
+  Tap:            Advance to the next bank of patterns (or Favourites).
+  Short press:    Jump to Favourites (or Bank 0, if there are no Favourites)
+  Long press:     Switch off.
+
+Pattern Button (for Banks 0 to 9):
+  Tap:            Advance to the next pattern within the current bank.
+  Long press:
+    1,2,3 Yellow: Begin Slideshow (with 3s, 7s or 15s interval).
+    Sea Green:    Save pattern (with selected colours) to Favourites.
+    1 Grey:       Cancel
+
+Pattern Button (for Favourites):
+  Tap:            Advance to the next Favourite pattern.
+  Long press:
+    1,2,3 Yellow: Begin Slideshow (with 3s, 7s or 15s interval).
+    Green:        Promote pattern to the start of the list.
+    Red:          Delete pattern from Favourites.
+    1 Grey:       Cancel
+
+Pattern Button (for Slideshow):
+  Tap:            Select the previous pattern. (The Slideshow continues.)
+  Long press:
+    Blue:         Stop the Slideshow.
