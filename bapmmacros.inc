@@ -185,7 +185,7 @@ dbvw macro x
     if ((x) < -32768) || ((x) > 65535)
       error "Word value out of range."
     endif
-    dw ((x) >> 8) & 255, (x) & 255
+    dw (x) & 255, ((x) >> 8) & 255
   endif
   endm
 
@@ -196,7 +196,7 @@ dbvl macro x
   if (BAPM_MODE)
     dbal (x)
   else
-    dw ((x) >> 24) & 255, ((x) >> 16) & 255, ((x) >> 8) & 255, (x) & 255
+    dw (x) & 255, ((x) >> 8) & 255, ((x) >> 16) & 255, ((x) >> 24) & 255
   endif
   endm
 

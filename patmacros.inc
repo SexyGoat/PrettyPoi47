@@ -37,29 +37,23 @@
 ; Pattern header (before the Palette, Map and Frames pointers)
 
 pattern macro dfmt, ncols, tmult, pfmt, nframes
-  if (dfmt) >= 2
-    if (dfmt) > 7
-      messg "Unknown display format."
+  if ((dfmt) >= 0) && ((dfmt) <= 4)
+    if (dfmt) < 2
+      if ncols
+        messg "The given display format should have zero palette colours."
+      endif
     else
-      if ((dfmt) >= 2) && ((dfmt) <= 6)
-        if (dfmt) < 6
-          if (ncols) > (((0xFF030FFF >> (((dfmt) - 2) * 8)) & 255) + 1)
-            messg "Too many colours for display format."
-          endif
-        else
-          if (ncols) > (((0x0000030F >> (((dfmt) - 6) * 8)) & 255) + 1)
-            messg "Too many colours for display format."
-          endif
+      if (dfmt) < 6
+        if (ncols) > (((0x00030FFF >> (((dfmt) - 2) * 8)) & 255) + 1)
+          messg "Too many colours for display format."
         endif
       endif
-    endif
-    if (ncols) < 1
-      error "A paletted display format must have at least one colour."
+      if (ncols) < 1
+        error "A paletted display format must have at least one colour."
+      endif
     endif
   else
-    if ncols
-      messg "The given display format should have zero palette colours."
-    endif
+    messg "Unknown display format."
   endif
   if (pfmt) & ~(PATSF_BAPM_PMF)
     messg "The pattern storage flags argument contain spurious bits."

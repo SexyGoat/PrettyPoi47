@@ -4,9 +4,8 @@ The items of most of the menus are selected by the duration of a button press.
 The options within the submenus within the Power-On Menu are each cycled with
 the Pattern Button and selected with the Mode Button.
 
-
 Power-On Menu:
-  Grey:     Switch on.
+  Grey:     Power on.
   Magenta:  Select colour ramp pairs for patterns in Banks 8 and 9.
   Blue:     Select LED intensity.
   Amber:    Enable or disable the updating of the Last Used Pattern memory:
@@ -17,19 +16,19 @@ Power-On Menu:
     Blue (3 LEDs):            A full Favourites list blocks new entries.
     Amber (2 proximal LEDs):  Favourites list locked.
     Red (1 proximal LED):     Favourites list locked, bank selection disabled.
-  Test pattern: Switch on.
+  Final:    Power off.
 
 Mode Button:
   Tap:            Advance to the next bank of patterns (or Favourites).
   Short press:    Jump to Favourites (or Bank 0, if there are no Favourites)
-  Long press:     Switch off.
+  Long press:     Power off.
 
 Pattern Button (for Banks 0 to 9):
   Tap:            Advance to the next pattern within the current bank.
   Long press:
     1,2,3 Yellow: Begin Slideshow (with 3s, 7s or 15s interval).
     Sea Green:    Save pattern (with selected colours) to Favourites.
-    1 Grey:       Cancel
+    1 Grey:       Cancel.
 
 Pattern Button (for Favourites):
   Tap:            Advance to the next Favourite pattern.
@@ -37,9 +36,24 @@ Pattern Button (for Favourites):
     1,2,3 Yellow: Begin Slideshow (with 3s, 7s or 15s interval).
     Green:        Promote pattern to the start of the list.
     Red:          Delete pattern from Favourites.
-    1 Grey:       Cancel
+    1 Grey:       Cancel.
 
 Pattern Button (for Slideshow):
   Tap:            Select the previous pattern. (The Slideshow continues.)
   Long press:
     Blue:         Stop the Slideshow.
+    Magenta:      Stop the Slideshow and enter Pattern Adjustment Mode.
+    Blue:         Stop the Slideshow.
+
+Pattern Adjustment Mode:
+  Mode Button:
+    Tap:            Cycle focus between Tempo, Ramp A, Ramp B and Ramp C.
+    Medium press:   Return to normal mode (leaving the pattern adjusted).
+    Long press:     Power off. (Changes will be lost.)
+  Pattern Button:   Cycle Tempo (1..8) or colour ramp.
+
+Note: Until it is transferred to the Favourites list, only one adjusted
+      pattern can exist at a time (and only while the power remains on).
+      Entering the Pattern Adjustment Mode for another preset pattern
+      causes the previously adjusted pattern to instantly revert to its
+      defualt colours and tempo.
