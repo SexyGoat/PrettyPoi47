@@ -5,7 +5,7 @@
 
 
 ; PrettyPoi47 firmware for Ninja LED stick poi
-; Version: 0.4.0.0
+; Version: 0.5.0.0
 ; (c) Copyright 2021, Daniel Neville
 
 
@@ -257,6 +257,7 @@
 ;     PatIsModified
 ;     UpdateEffectivePatMod
 ;     ModifyPattern_Tramp0
+;     ForbidAllBlackPatMod_Tramp0
 ;   Last Used Pattern:
 ;     SetEWLAccessForLUP
 ;     GetLastUsedPattern
@@ -297,6 +298,7 @@
 ;     Add4WBAPMOffset_Page1
 ;     GetPatternFromBank_Page1
 ;     ModifyPattern_Page1
+;     ForbidAllBlackPatMod_Page1
 ;     AnimateBootMenuOption_Page1
 ;     AnimateCue_Page1
 ;     AnimatePatAdjMode_Page1
@@ -767,6 +769,17 @@ PatMod_RampIxC: 1
 PatModSize:
         ENDC
 
+; Palette Usage Metrics
+;
+; A pattern is analysed to find how many user-selectable ramps it has
+; and whether or not it is entirely black.
+        CBLOCK 0
+PUM_IsPaletted: 1
+PUM_HighestPalIx: 1
+PUM_NumUserRamps: 1
+PUMSize:
+        ENDC
+
 
 ;------------------------------------------------------------------------------
 ; EEPROM addresses
@@ -875,10 +888,11 @@ EffectivePatMod: PatModSize   ; To be saved when a Favourite Pattern is saved
 ModFavouriteIx: 1
 ModBankIx: 1
 ModPatternIx: 1
-        ; 46
+PaletteUsageMetrics: PUMSize
+        ; 49
         ENDC
 
-        CBLOCK  0x0050
+        CBLOCK  0x0051
 ; EPROM Wear-Levelling and general EEPROM access
 EWLFind: EWLFindSize  ; 4
 EWLAccess: EWLAccessSize  ; 5
@@ -886,7 +900,7 @@ EEPROMPtr: 1
         ; 10
         ENDC
 
-        CBLOCK  0x0050
+        CBLOCK  0x0051
 ; Peculiar stand-ins for OCRs for the Phase-Correct PWM implementation
 PCPWM9State: PCPWM9Size
 ; Pretend Output Compare Registers, after intensity adjustment
@@ -902,7 +916,7 @@ LED1OCR_Blue: 1
         ; 29
         ENDC
 
-        CBLOCK  0x0050
+        CBLOCK  0x0051
 ; Byte-Aligned Program Memory access and divide-by-7 working registers
 BAPMRec: BAPMSize
 Div7Rec: Div7Size
@@ -2817,8 +2831,7 @@ FetchAnimFrame_Paletted_4c:
 ; in the frame as 0..3).
 ;
 ; Format (2 bytes):
-;   pppp3333: Period 0..15 => 1..16 frame unit periods, LED3 colour index
-;   22221111: LED2 colour index and LED1 colour index
+;   pp332211: Period 0..3 => 1..4 frame unit periods, LED3 colour index
 
         call    FetchAnimFrame_Common
         ; 17 cycles
@@ -3056,9 +3069,8 @@ _RP4L_LookUpStride:
         retlw   4
         retlw   2
         retlw   1
-        retlw   4
-        retlw   2
-        retlw   1
+        retlw   0
+        retlw   0
 _RP4L_LookUpStride_Bad:
         retlw   0
 
@@ -3491,6 +3503,16 @@ _UpdateERIxs_CopyRampsLoop:
 ModifyPattern_Tramp0:
         pagesel ModifyPattern_Page1
         call    ModifyPattern_Page1
+        movlp   0
+        return
+
+
+;------------------------------------------------------------------------------
+
+
+ForbidAllBlackPatMod_Tramp0:
+        pagesel ForbidAllBlackPatMod_Page1
+        call    ForbidAllBlackPatMod_Page1
         movlp   0
         return
 
@@ -4532,6 +4554,7 @@ _Main_SkipCueInit:
         call    LoadPattern
         call    UpdateEffectivePatMod
         call    ModifyPattern_Tramp0
+        call    ForbidAllBlackPatMod_Tramp0
 _Main_SkipButtonPress:
 
         ; The normal animation playing happens here.
@@ -4585,6 +4608,7 @@ _Main_SSAdv_Common:
         call    LoadPattern
         call    UpdateEffectivePatMod
         call    ModifyPattern_Tramp0
+        call    ForbidAllBlackPatMod_Tramp0
         call    _Main_LoadSlideshowCtr
         bra     _Main_Loop
 
@@ -4602,6 +4626,7 @@ _Main_AnimateCue:
         call    LoadPattern
         call    UpdateEffectivePatMod
         call    ModifyPattern_Tramp0
+        call    ForbidAllBlackPatMod_Tramp0
         bra     _Main_Loop
 
 _Main_SetBankPatRampStuff:
@@ -4642,12 +4667,6 @@ _Main_LoadSlideshowCtr:
         movf    FSR0H, W
         movwf   SlideshowCounter + 1
         retlw   0
-
-PM_SlideshowIntvTable:
-        dw  0
-        dw  SSHOW_INTV_1_PWM_CYCLES_14
-        dw  SSHOW_INTV_2_PWM_CYCLES_14
-        dw  SSHOW_INTV_3_PWM_CYCLES_14
 
 
 ;------------------------------------------------------------------------------
@@ -5017,6 +5036,49 @@ _ModPat_LoadPaletteSection:
 ;------------------------------------------------------------------------------
 
 
+ForbidAllBlackPatMod_Page1:
+; Keep the colour ramps from causing the pattern to be entirely black.
+
+        call    AnalysePaletteUse_Page1
+        btfss   PaletteUsageMetrics + PUM_IsPaletted, 0
+        retlw   0
+        btfss   ModeFlags, MF_BIT_EXTERNALRAMPS
+        retlw   0
+        movf    EffectivePatMod + PatMod_RampIxA, W
+        xorlw   R_BLK
+        movwf   Scratch0
+        movlw   1
+        subwf   PaletteUsageMetrics + PUM_NumUserRamps, W
+        btfss   STATUS, C
+        retlw   0   ; No ramps
+        btfsc   STATUS, Z
+        bra     _FABPM_CheckMask  ; Just Ramp A
+        movf    EffectivePatMod + PatMod_RampIxB, W
+        xorlw   R_BLK
+        iorwf   Scratch0, F
+        btfss   PaletteUsageMetrics + PUM_NumUserRamps, 0
+        bra     _FABPM_CheckMask  ; Ramps A and B
+        movf    EffectivePatMod + PatMod_RampIxC, W
+        xorlw   R_BLK
+        iorwf   Scratch0, F
+        ; Ramps A, B and C
+_FABPM_CheckMask:
+        movf    Scratch0, W
+        btfss   STATUS, Z
+        retlw   0
+        movlw   LOW(PM_Pat_HaveYouSeenMyPoi)
+        movwf   FSR0L
+        movlw   HIGH(PM_Pat_HaveYouSeenMyPoi)
+        movwf   FSR0H
+        movlp   0
+        call    LoadPattern
+        pagesel ForbidAllBlackPatMod_Page1
+        retlw   0
+
+
+;------------------------------------------------------------------------------
+
+
 AnimateBootMenuOption_Page1:
 ; Animate a simple tap-to-cycle menu until the Mode button is pressed.
 ;
@@ -5106,7 +5168,17 @@ AnimatePatAdjMode_Page1:
         movwf   ModPatternIx
         clrf    PatAdjItemIx
         bcf     ModeFlags, MF_BIT_CUE
-        bra     _APAM_Loop_LoadPat
+
+        incfsz  FavouriteIx, W
+        call    GetFavourite
+        call    GetPatternFromBank_Tramp0
+        call    LoadPattern
+        pagesel AnalysePaletteUse_Page1
+        call    AnalysePaletteUse_Page1
+        movlp   0
+        call    UpdateEffectivePatMod
+        call    ModifyPattern_Tramp0
+        call    ForbidAllBlackPatMod_Tramp0
 
 _APAM_Loop:
         btfsc   PORT_REGBIT_FR(UPB_MODE_BUTTON)
@@ -5153,9 +5225,14 @@ _APAM_ModeBtnPressed:
         bra    _APAM_SignalShutdown
         bra     _APAM_Done
 _APAM_NextItemToAdjust:
+        movf    PaletteUsageMetrics + PUM_NumUserRamps, W
+        subwf   PatAdjItemIx, W
+        btfsc   STATUS, C
+        bra     _APAM_NextItem_BackToTempo
         incf    PatAdjItemIx, F
         movlw   3
         btfss   ModeFlags, MF_BIT_EXTERNALRAMPS
+_APAM_NextItem_BackToTempo:
         clrw
         andwf   PatAdjItemIx, F
         ; Fall through to _APAM_ShowValue
@@ -5207,6 +5284,7 @@ _APAM_Loop_LoadPat:
         call    LoadPattern
         call    UpdateEffectivePatMod
         call    ModifyPattern_Tramp0
+        call    ForbidAllBlackPatMod_Tramp0
         bra     _APAM_Loop
 
 _APAM_Done:
@@ -5216,6 +5294,119 @@ _APAM_Done:
 _APAM_SignalShutdown:
         bcf     ModeFlags, MF_BIT_CUE
         retlw   1
+
+
+;------------------------------------------------------------------------------
+
+
+AnalysePaletteUse_Page1:
+        clrf    PaletteUsageMetrics + PUM_IsPaletted
+        clrf    PaletteUsageMetrics + PUM_HighestPalIx
+        clrf    PaletteUsageMetrics + PUM_NumUserRamps
+        movf    GAState + GAS_ExpPatPtr + 0, W
+        movwf   FSR0L
+        movf    GAState + GAS_ExpPatPtr + 1, W
+        movwf   FSR0H
+        movf    GAState + GAS_NumFrames, W
+        btfsc   STATUS, Z
+        retlw   0
+        movwf   LoopCtr0
+_APU_Loop:
+        movf    GAState + GAS_AnimControlFlags, W
+        andlw   ACF_FORMAT_MASK
+        brw
+        bra     _APU_Invalid
+        bra     _APU_Invalid
+        bra     _APU_256c
+        bra     _APU_16c
+        bra     _APU_4c
+        bra     _APU_Invalid
+        bra     _APU_Invalid
+        bra     _APU_Invalid
+_APU_256c:
+        moviw   FSR0++  ; Skip the frame period byte.
+        moviw   FSR0++
+        call    _APU_Accumulate
+        moviw   FSR0++
+        call    _APU_Accumulate
+        moviw   FSR0++
+        call    _APU_Accumulate
+        bra     _APU_Next
+_APU_16c:
+        moviw   FSR0++
+        andlw   0x0F
+        call    _APU_Accumulate
+        swapf   INDF0, W
+        andlw   0x0F
+        call    _APU_Accumulate
+        moviw   FSR0++
+        andlw   0x0F
+        call    _APU_Accumulate
+        bra     _APU_Next
+_APU_4c:
+        swapf   INDF0, W
+        andlw   0x03
+        call    _APU_Accumulate
+        lsrf    INDF0, W
+        lsrf    WREG, F
+        andlw   0x03
+        call    _APU_Accumulate
+        moviw   FSR0++
+        andlw   0x03
+        call    _APU_Accumulate
+        bra     _APU_Next
+_APU_Invalid:
+        movf    GAState + GAS_FrameRecordStride, W
+        addwf   FSR0L, F
+        movlw   0
+        addwfc  FSR0H, F
+_APU_Next:
+        decfsz  LoopCtr0, F
+        bra     _APU_Loop
+        btfss   PaletteUsageMetrics + PUM_IsPaletted, 0
+        retlw   0
+        movf    PaletteUsageMetrics + PUM_NumUserRamps, W
+        sublw   8 - 1
+        btfss   STATUS, C
+        clrw
+        sublw   8 - 1
+        call    _APU_NRampsFromHUIx
+        movwf   PaletteUsageMetrics + PUM_NumUserRamps
+        return
+_APU_NRampsFromHUIx:
+        brw
+        retlw   1  ;0 (Background is a part of Ramp A)
+        retlw   1  ;1
+        retlw   1  ;2
+        retlw   1  ;3
+        retlw   2  ;4 (Beginning of Ramp B)
+        retlw   2  ;5
+        retlw   2  ;6
+        retlw   3  ;7 (Beginning of Ramp C)
+_APU_Accumulate:
+        bsf     PaletteUsageMetrics + PUM_IsPaletted, 0
+        movwf   Scratch0
+        subwf   PaletteUsageMetrics + PUM_HighestPalIx, W
+        btfsc   STATUS, C
+        bra     _APU_Acc_SkipNewHighPalIx
+        movf    Scratch0, W
+        movwf   PaletteUsageMetrics + PUM_HighestPalIx
+_APU_Acc_SkipNewHighPalIx:
+        btfss   ModeFlags, MF_BIT_EXTERNALRAMPS
+        retlw   0
+        movf    Scratch0, W
+        sublw   10 - 1
+        btfss   STATUS, C
+        bra     _APU_Acc_NoNewHighURPalIx
+        ; A colour index in range of the user colour ramps!
+        movf    Scratch0, W
+        subwf   PaletteUsageMetrics + PUM_NumUserRamps, W
+        btfsc   STATUS, C
+        bra     _APU_Acc_NoNewHighURPalIx
+        movf    Scratch0, W
+        movwf   PaletteUsageMetrics + PUM_NumUserRamps
+_APU_Acc_NoNewHighURPalIx:
+        retlw   0
 
 
 ;------------------------------------------------------------------------------
@@ -5472,7 +5663,7 @@ PM_Pat_LPMenu_PatAdjMode_Mode:
         pf256c   16,    0,        0,        0
         pf256c    9, SYS_DGRY, SYS_DGRY, SYS_DGRY
         ; Exit adjustment mode, keeping changes.
-        pf256c   60, SYS_YEL,  SYS_YEL,  SYS_YEL
+        pf256c   80, SYS_YEL,  SYS_YEL,  SYS_YEL
         pf256c   21, SYS_YEL,  SYS_YEL,  SYS_YEL
         ; Off
         pf256c    2, SYS_XRED, SYS_XRED, SYS_XRED
@@ -5573,25 +5764,25 @@ PM_Pat_Cue_EnterStds:
 BAPM_Map_PAM_ValueCue:
         bablock
         dbv10b  BLK, RED, RED1, RED2, GRN, GRN1, GRN2, BLU, BLU1, BLU2
-        dbv3b   BLK, BLU2, ORA
+        dbv4b   BLK, BLU2, ORA, SYS_SKY
         endbab
 BAPM_Frs_PAM_ValueCue:
         bablock
-        pf16c     1,  11, 11, 11
-        pf16c     1,  12, 11, 11
-        pf16c     1,  11, 12, 11
-        pf16c     1,  12, 12, 11
         pf16c     1,  11, 11, 12
-        pf16c     1,  12, 11, 12
+        pf16c     1,  11, 12, 11
         pf16c     1,  11, 12, 12
+        pf16c     1,  12, 11, 11
+        pf16c     1,  12, 11, 12
+        pf16c     1,  12, 12, 11
         pf16c     1,  12, 12, 12
+        pf16c     1,  13, 13, 13
         pf16c     1,   0,  0,  0
         pf16c     1,   1,  2,  3
         pf16c     1,   4,  5,  6
         pf16c     1,   7,  8,  9
         endbab
 PM_Pat_PAM_ValueCue:
-        pattern PATDF_16C, 13, 10, PATSF_BAPM_PMF, 12
+        pattern PATDF_16C, 14, 10, PATSF_BAPM_PMF, 12
         dw BAPM_Pal_Basic, BAPM_Map_PAM_ValueCue, BAPM_Frs_PAM_ValueCue
 
 
@@ -5706,41 +5897,42 @@ BAPM_ColourRamps:
   resetenum
   bablock
   ; Plain colours
-  enumdat R_RED,        dbvl, RAMP4(0, RED, RED1, RED2)
-  enumdat R_BLZ,        dbvl, RAMP4(0, BLZ, BLZ1, BLZ2)
-  enumdat R_ORA,        dbvl, RAMP4(0, ORA, ORA1, ORA2)
-  enumdat R_YEL,        dbvl, RAMP4(0, YEL, YEL1, YEL2)
-  enumdat R_SNT,        dbvl, RAMP4(0, SNT, SNT1, SNT2)
-  enumdat R_GRN,        dbvl, RAMP4(0, GRN, GRN1, GRN2)
-  enumdat R_SGR,        dbvl, RAMP4(0, SGR, SGR1, SGR2)
-  enumdat R_CYN,        dbvl, RAMP4(0, CYN, CYN1, CYN2)
-  enumdat R_SKY,        dbvl, RAMP4(0, SKY, SKY1, SKY2)
-  enumdat R_BLU,        dbvl, RAMP4(0, BLU, BLU1, BLU2)
-  enumdat R_PUR,        dbvl, RAMP4(0, PUR, PUR1, PUR2)
-  enumdat R_VIO,        dbvl, RAMP4(0, VIO, VIO1, VIO2)
-  enumdat R_MAG,        dbvl, RAMP4(0, MAG, MAG1, MAG2)
-  enumdat R_CER,        dbvl, RAMP4(0, CER, CER1, CER2)
-  enumdat R_PNK,        dbvl, RAMP4(0, PNK, PNK1, PNK2)
-  enumdat R_WHT,        dbvl, RAMP4(0, WHT, WHT1, WHT2)
+  enumdat R_RED,        dbvl, RAMP4(0, RED,  RED1, RED2)
+  enumdat R_BLZ,        dbvl, RAMP4(0, BLZ,  BLZ1, BLZ2)
+  enumdat R_ORA,        dbvl, RAMP4(0, ORA,  ORA1, ORA2)
+  enumdat R_YEL,        dbvl, RAMP4(0, YEL,  YEL1, YEL2)
+  enumdat R_SNT,        dbvl, RAMP4(0, SNT,  SNT1, SNT2)
+  enumdat R_GRN,        dbvl, RAMP4(0, GRN,  GRN1, GRN2)
+  enumdat R_SGR,        dbvl, RAMP4(0, SGR,  SGR1, SGR2)
+  enumdat R_CYN,        dbvl, RAMP4(0, CYN,  CYN1, CYN2)
+  enumdat R_SKY,        dbvl, RAMP4(0, SKY,  SKY1, SKY2)
+  enumdat R_BLU,        dbvl, RAMP4(0, BLU,  BLU1, BLU2)
+  enumdat R_PUR,        dbvl, RAMP4(0, PUR,  PUR1, PUR2)
+  enumdat R_VIO,        dbvl, RAMP4(0, VIO,  VIO1, VIO2)
+  enumdat R_MAG,        dbvl, RAMP4(0, MAG,  MAG1, MAG2)
+  enumdat R_CER,        dbvl, RAMP4(0, CER,  CER1, CER2)
+  enumdat R_PNK,        dbvl, RAMP4(0, PNK,  PNK1, PNK2)
+  enumdat R_WHT,        dbvl, RAMP4(0, WHT,  WHT1, WHT2)
+  enumdat R_BLK,        dbvl, RAMP4(0, BLK,  BLK,  BLK)
   enumdat R_RED1,       dbvl, RAMP4(0, RED1, RED2, RED3)
   enumdat R_ORA1,       dbvl, RAMP4(0, ORA1, ORA2, ORA3)
   enumdat R_GRN1,       dbvl, RAMP4(0, GRN1, GRN2, GRN3)
   enumdat R_BLU1,       dbvl, RAMP4(0, BLU1, BLU2, BLU3)
   ; Chromatic abberations
-  enumdat R_FIRE,       dbvl, RAMP4(0, ORA, BLZ1, RED2)
-  enumdat R_ICE,        dbvl, RAMP4(0, CYN, SKY1, BLU2)
-  enumdat R_BLURPLE,    dbvl, RAMP4(0, BLU, VIO1, MAG2)
-  enumdat R_MINT,       dbvl, RAMP4(0, WHT, SGR, GRN2)
-  enumdat R_STRAWBRY,   dbvl, RAMP4(0, PNK, CER1, RED2)
-  enumdat R_GOLD,       dbvl, RAMP4(0, YEL, ORA1, BLZ2)
-  enumdat R_ARC,        dbvl, RAMP4(0, XEN, PUR, VIO2)
-  enumdat R_BUNSEN,     dbvl, RAMP4(0, PUR, PUR1, BLU2)
+  enumdat R_FIRE,       dbvl, RAMP4(0, ORA,  BLZ1, RED2)
+  enumdat R_ICE,        dbvl, RAMP4(0, CYN,  SKY1, BLU2)
+  enumdat R_BLURPLE,    dbvl, RAMP4(0, BLU,  VIO1, MAG2)
+  enumdat R_MINT,       dbvl, RAMP4(0, WHT,  SGR,  GRN2)
+  enumdat R_STRAWBRY,   dbvl, RAMP4(0, PNK,  CER1, RED2)
+  enumdat R_GOLD,       dbvl, RAMP4(0, YEL,  ORA1, BLZ2)
+  enumdat R_ARC,        dbvl, RAMP4(0, XEN,  PUR,  VIO2)
+  enumdat R_BUNSEN,     dbvl, RAMP4(0, PUR,  PUR1, BLU2)
   ; Non-black backgrounds
-  enumdat R_PURHAZE_A,  dbvl, RAMP4(MAG2, ORA, BLZ, RED1)
-  enumdat R_PURHAZE_B,  dbvl, RAMP4(MAG2, BLU, PUR1, VIO1)
-  enumdat R_TIEDYED_A,  dbvl, RAMP4(BLZ2, SKY, YEL, CER1)
-  enumdat R_TIEDYED_B,  dbvl, RAMP4(BLZ2, BLZ, GRN1, BLU1)
-  enumdat R_RED_MIST,   dbvl, RAMP4(RED2, BLZ, RED, RED1)
+  enumdat R_PURHAZE_A,  dbvl, RAMP4(MAG2, ORA,  BLZ,  RED1)
+  enumdat R_PURHAZE_B,  dbvl, RAMP4(MAG2, BLU,  PUR1, VIO1)
+  enumdat R_TIEDYED_A,  dbvl, RAMP4(BLZ2, SKY,  YEL,  CER1)
+  enumdat R_TIEDYED_B,  dbvl, RAMP4(BLZ2, BLZ,  GRN1, BLU1)
+  enumdat R_RED_MIST,   dbvl, RAMP4(RED2, BLZ,  RED,  RED1)
   endbab
 NUM_RAMPS equ ENUMIX
 
@@ -5884,6 +6076,17 @@ BAPM_Frs_SolidSteps:
 PM_Pat_SolidSteps:
         pattern PATDF_16C, 16, 224, PATSF_BAPM_PMF, 16
         dw BAPM_Pal_Basic, BAPM_Map_SolidSteps, BAPM_Frs_SolidSteps
+
+PM_Map_HaveYouSeenMyPoi:
+        bablock
+        dbv4b   BLK, RED1, RED2, RED3
+        endbab
+PM_Pat_HaveYouSeenMyPoi:
+        pattern PATDF_4C, 4, 1, PATSF_BAPM_PMF, 1
+        dw BAPM_Pal_Basic, PM_Map_HaveYouSeenMyPoi, 0
+        bablock
+        pf4c      1,   0,  3,  0
+        endbab
 
 BAPM_Frs_Flashy:
         bablock
@@ -6756,6 +6959,7 @@ PM_PatAddrTable:
   enumdat PAT_LAG_TRI_RAINBOW,    dw, PM_Pat_LagTriRainbow
   enumdat PAT_SOLID_STEPS,        dw, PM_Pat_SolidSteps
   enumdat PAT_SOLID,              dw, PM_Pat_Solid
+  enumdat PAT_HAVE_YOU_SEEN_MY_POI, dw, PM_Pat_HaveYouSeenMyPoi
   enumdat PAT_FLASH,              dw, PM_Pat_Flash
   enumdat PAT_RIM_WTD_SOLID,      dw, PM_Pat_RimWeightedSolid
   enumdat PAT_RIM_WTD_FLASH,      dw, PM_Pat_RimWeightedFlash
@@ -6879,6 +7083,8 @@ pat_er macro pat_id, rampa, rampb, rampc, fupscaler, fup
     pat_er    PAT_SOLID,  R_MAG,  0, 0,  0, 1
     pat_er    PAT_SOLID,  R_CER,  0, 0,  0, 1
     pat_er    PAT_SOLID,  R_PNK,  0, 0,  0, 1
+    pat_er    PAT_SOLID,  R_WHT,  0, 0,  0, 1
+    pat_er    PAT_HAVE_YOU_SEEN_MY_POI, R_RED1,  0, 0,  0, 1
   endpattable
 
   pattable 1
@@ -7144,6 +7350,16 @@ PM_BankTable:
         dw  PM_PatTable_Bank6  ; Two colour ramps, Set B
         dw  PM_PatTable_Bank7  ; Miscellaneous
 NUM_BANKS equ ($ - PM_BankTable - 1)
+
+
+;------------------------------------------------------------------------------
+
+
+PM_SlideshowIntvTable:
+        dw  0
+        dw  SSHOW_INTV_1_PWM_CYCLES_14
+        dw  SSHOW_INTV_2_PWM_CYCLES_14
+        dw  SSHOW_INTV_3_PWM_CYCLES_14
 
 
 ;------------------------------------------------------------------------------
