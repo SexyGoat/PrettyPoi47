@@ -6,7 +6,6 @@ the Pattern Button and selected with the Mode Button.
 
 Power-On Menu:
   Grey:     Power on.
-  Magenta:  Select colour ramp pairs for patterns in Banks 8 and 9.
   Blue:     Select LED intensity.
   Amber:    Enable or disable the updating of the Last Used Pattern memory:
     Sea Green (2 distal LEDs): Selecting a pattern updates the LUP memory.
@@ -52,8 +51,26 @@ Pattern Adjustment Mode:
     Long press:     Power off. (Changes will be lost.)
   Pattern Button:   Cycle Tempo (1..8) or colour ramp.
 
-Note: Until it is transferred to the Favourites list, only one adjusted
-      pattern can exist at a time (and only while the power remains on).
-      Entering the Pattern Adjustment Mode for another preset pattern
-      causes the previously adjusted pattern to instantly revert to its
-      defualt colours and tempo.
+Notes:
+
+* Until it is transferred to the Favourites list, only one adjusted
+  pattern can exist at a time (and only while the power remains on).
+  Entering the Pattern Adjustment Mode for another preset pattern
+  causes the previously adjusted pattern to instantly revert to its
+  default colours and tempo.
+
+* Patterns with flat colours use only the first (foreground) colour
+  of each colour ramp assigned to them. The first ramp sets the
+  background colour. (Most ramps set the background to black.)
+
+* Most of the flame animations reference one of a few special
+  16-colour ramps rather than one of the many 3-colour ramps, to
+  provide relatively smooth persistence-of-vision effects.
+
+* In the pattern editor, the tempo is indicated by a binary display
+  of the relative period from 1 to 8, with only the lower three
+  bits visible. Blue = 0, orange = 1. The least significant bit is
+  at the distal end, the end at the lowest point when the poi is
+  suspended by the lanyard. A period of 8 is displayed as (1)000
+  in a lighter shade of blue. The period is proportional to the
+  length of the pattern traced at any given speed.
