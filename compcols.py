@@ -22,7 +22,7 @@ D = [
 
 basic_xforms = [
   (lambda x: x),
-  (lambda x: (((45 * c + 50) // 100) for c in x)),
+  (lambda x: (((56 * c + 50) // 100) for c in x)),
   (lambda x: (((8 * c + 50) // 100) for c in x)),
 ]
 basic_xffads = [
@@ -44,7 +44,7 @@ gs_xforms = [
   (lambda x: tuple((((10 * c + 50) // 100) for c in x))),
   (lambda x: tuple((((35 * c + 50) // 100) for c in x))),
   (lambda x: x),
-  (lambda x: t3(0xD0DEE4)),
+  (lambda x: t3(0xCADEE4)),
 ]
 
 def t3(x):
@@ -69,7 +69,7 @@ def main():
 
   clix = 0
 
-  fmt = "  enumdat {:<9}dbvrgb, 0x{:06X}  ; {:>2}{}"
+  fmt = "  enumdat {:<9}dbargb, 0x{:06X}  ; {:>2}{}"
 
   for gsns, xfn in zip(gs_names, gs_xforms):
     enumname, cmmt = gsns
@@ -90,13 +90,21 @@ def main():
       print(fmt.format(enumname + ",", x, clix, cmmtfield))
       clix += 1
 
-  print("  ; Special colours")
-  fmt = "  enumdat {:<9}dbvrgb, 0x{:06X}  ; {:>2}: {}"
-  for enumname, z, desc in [
-    ("RED3",  0x080000, "Darkest Red"),
-    ("ORA3",  0x090100, "Darkest Orange"),
-    ("GRN3",  0x000800, "Darkest Green"),
-    ("BLU3",  0x000008, "Darkest Blue"),
+  print("  ; Special colours, including dark ones "
+        "which risk rounding to black")
+  fmt = "  enumdat {:<9}dbargb, 0x{:06X}  ; {:>2}: {}"
+  for enumname, x, desc in [
+    ("FLA",   0xCC3F09, "Flame centre"),
+    ("FLA1",  0x701602, "Flame periphery"),
+    ("FLA2",  0x150300, "Flame tip"),
+    ("FLA3",  0x050100, "Flame background"),
+    ("BLP1",  0x0C006B, "Medium Blurple"),
+    ("PSG",   0x2CCC48, "Pale Sea Green"),
+    ("RED3",  0x040000, "Darkest Red"),
+    ("ORA3",  0x040100, "Darkest Orange"),
+    ("GRN3",  0x000400, "Darkest Green"),
+    ("BLU3",  0x000004, "Darkest Blue"),
+    ("PUR3",  0x020005, "Darkest Purple"),
   ]:
     cmmtfield = ["",": "][desc != ""] + desc
     print(fmt.format(enumname + ",", x, clix, cmmtfield))

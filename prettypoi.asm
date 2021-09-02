@@ -5,7 +5,7 @@
 
 
 ; PrettyPoi47 firmware for Ninja LED stick poi
-; Version: 0.5.0.0
+; Version: 0.9.5.0
 ; (c) Copyright 2021, Daniel Neville
 
 
@@ -283,7 +283,7 @@
 ;     RegisterButtonPress
 ;     AnimateCue
 ;     AnimateLongPress
-;     AnimateBootMenuOption
+;     AnimateBootMenuOption_Tramp0
 ;   Main functions:
 ;     Main
 ;
@@ -302,13 +302,21 @@
 ;     AnimateBootMenuOption_Page1
 ;     AnimateCue_Page1
 ;     AnimatePatAdjMode_Page1
+;     AnalysePaletteUse_Page1
 ;
-;   System cues and menus (partially moved to Page 0)
+;   Palette for system cues and menus
+;   System error patterns
+;   System cues and menus
+;   System pattern addresses, enumerated
 ;   Basic palette, enumerated
 ;   Colour ramps (palette mappings to be applied to suitable patterns)
+;   Ramp16 palettes
+;   Ramp16 palette addresses, enumerated
 ;   Patterns
 ;   Pattern address table, enumerated
+;   Pattern bank storage macros
 ;   Pattern banks
+;   Configuration words
 
 
 ;------------------------------------------------------------------------------
@@ -459,6 +467,7 @@ FCF_BIT_DELTA           equ 7  ; 0 => Load, 1 => Delta
 MF_BIT_CUE              equ 7  ; A system feedback cue is playing.
 MF_BIT_SLIDESHOW        equ 6  ; Slideshow mode is active.
 MF_BIT_EXTERNALRAMPS    equ 5  ; Colour ramps may be set by the user.
+MF_BIT_RAMP16           equ 4  ; A special single HQ ramp palette is used.
 MF_BIT_NOFAVSPILL       equ 3  ; Adding a new Favourite requires a free slot.
 MF_BIT_LUPLOCKED        equ 2  ; Last Used Pattern record no longer updated.
 MF_BIT_FAVPROTECT       equ 1  ; Favourites list cannot be altered.
@@ -3808,9 +3817,7 @@ SaveFavourite:
 ;
 ; The currently effective ramp indices used to modify a pattern's palette
 ; are saved within the individual Favourite Pattern record. When a Favourite
-; Pattern is recalled, its ramp indices will be given priority over the
-; general user ramp indices (those which amounts to the user's favourite
-; colours).
+; Pattern is recalled, its ramp indices will be given priority.
 ;
 ;                 bit
 ;              76543210  ; b = Bank index
@@ -4212,6 +4219,16 @@ _AnimLP__SkipFlicker:
         btfss   STATUS, C
         bra     _AnimLP_Loop
         movf    GAState + GAS_FrameIx, W
+        return
+
+
+;------------------------------------------------------------------------------
+
+
+AnimateBootMenuOption_Tramp0:
+        pagesel AnimateBootMenuOption_Page1
+        call    AnimateBootMenuOption_Page1
+        movlp   0
         return
 
 
@@ -4671,16 +4688,6 @@ _Main_LoadSlideshowCtr:
 
 ;------------------------------------------------------------------------------
 
-
-AnimateBootMenuOption_Tramp0:
-        pagesel AnimateBootMenuOption_Page1
-        call    AnimateBootMenuOption_Page1
-        movlp   0
-        return
-
-
-;------------------------------------------------------------------------------
-
 Page0CodeEnd:
 Page0WordsUsed = Page0CodeEnd - 0x0000
 Page0WordsFree = 0x0800 - Page0CodeEnd
@@ -4774,11 +4781,11 @@ _CondInitE_InitLoop:
         retlw   0
 _CondInitE_BAPM_Pokes:
         bablock
-        dbv2b   EEPROM_Brightness, DEFAULT_INTENSITY_IX
-        dbv2b   EEPROM_LockBits, DEFAULT_LOCK_BITS
-        dbv2b   EEPROM_LUPStatusRing, 0
-        dbv2b   EEPROM_LUPDataRing + 0, 0
-        dbv2b   EEPROM_LUPDataRing + 1, 0
+        dba2b   EEPROM_Brightness, DEFAULT_INTENSITY_IX
+        dba2b   EEPROM_LockBits, DEFAULT_LOCK_BITS
+        dba2b   EEPROM_LUPStatusRing, 0
+        dba2b   EEPROM_LUPDataRing + 0, 0
+        dba2b   EEPROM_LUPDataRing + 1, 0
 _CondInitE_NUM_POKES equ BAPM_BYTE_OFFSET / 2
         endbab
 
@@ -4828,6 +4835,7 @@ GetPatternFromBank_Page1:
 ;      PatternFUPScaler = Frame Unit Period scaler: 0..3 => (1, 2, 8, 32)
 ;      DefaultPatMod
 ;      ModeFlags[MF_BIT_EXTERNALRAMPS]
+;      ModeFlags[MF_BIT_RAMP16]
 ;      BankIx, PatternIx validated
 
         movlp   0
@@ -4907,6 +4915,56 @@ _GetPA_PatIxZeroPlus:
         movf    Scratch1, W
         call    FetchPMWordFromTable
         bsf     FSR0H, 7
+        ; Now that we have the pattern header address, we can
+        ; see if it is the sort which uses a special 16-colour
+        ; ramp.
+        bcf     ModeFlags, MF_BIT_RAMP16
+        movlw   NUM_RAMP16_PALETTES
+        movwf   LoopCtr0
+        movf    LoopCtr0, F
+        btfsc   STATUS, Z
+        bra     _GetPA_SkipR16Test
+        ; There is at least one of those special 16-colour palettes.
+        movlp   0
+        addfsr  FSR0, 3
+        call    ReadPMHighBits
+        bsf     WREG, 7
+        movwf   Scratch1
+        movf    INDF0, W
+        movwf   Scratch0
+        addfsr  FSR0, -3
+        ; Stash the pattern header address somewhere safe.
+        movf    FSR0L, W
+        movwf   FSR1L
+        movf    FSR0H, W
+        movwf   FSR1H
+        movlw   LOW(PM_Ramp16AddrTable)
+        movwf   FSR0L
+        movlw   HIGH(PM_Ramp16AddrTable)
+        movwf   FSR0H
+_GetPA_R16_loop:
+        call    ReadPMHighBits
+        bsf     WREG, 7
+        xorwf   Scratch1, W
+        btfss   STATUS, Z
+        bra     _GetPA_R16_Next
+        movf    INDF0, W
+        xorwf   Scratch0, W
+        btfss   STATUS, Z
+        bra     _GetPA_R16_Next
+        ; Found a match!
+        bsf     ModeFlags, MF_BIT_RAMP16
+        bra     _GetPA_R16_RestorePatPtr
+_GetPA_R16_Next:
+        decfsz  LoopCtr0, F
+        bra     _GetPA_R16_loop
+_GetPA_R16_RestorePatPtr:
+        movf    FSR1L, W
+        movwf   FSR0L
+        movf    FSR1H, W
+        movwf   FSR0H
+        pagesel GetPatternFromBank_Page1
+_GetPA_SkipR16Test:
         retlw   0
 
 
@@ -4934,11 +4992,11 @@ ModifyPattern_Page1:
         lslf    GAState + GAS_FramePeriodUnit, F
         lslf    GAState + GAS_FramePeriodUnit, F
         lslf    GAState + GAS_FramePeriodUnit, F
-        lslf    GAState + GAS_FramePeriodUnit, F  ; Overflow is possible here.
+        lslf    GAState + GAS_FramePeriodUnit, F  ; Overflow may happen here...
         nop
         movlw   255
         btfsc   STATUS, C
-        movwf   GAState + GAS_FramePeriodUnit
+        movwf   GAState + GAS_FramePeriodUnit     ; ...but is handled here.
 
         ; Check that the pattern accepts external ramps.
         btfss   ModeFlags, MF_BIT_EXTERNALRAMPS
@@ -4949,18 +5007,23 @@ ModifyPattern_Page1:
         btfsc   STATUS, C
         retlw   0  ; A direct colour mode: No palette to modify!
 
-        pagesel ModifyPattern_Page1
+        ; Set up the palette mapping destination.
+        movf    GAState + GAS_PalettePtr + 0, W
+        movwf   MapWS + MapWS_DestPtr + 0
+        movf    GAState + GAS_PalettePtr + 1, W
+        movwf   MapWS + MapWS_DestPtr + 1
 
-        ; Set up the palette mapping working space.
+        btfsc   ModeFlags, MF_BIT_RAMP16
+        bra     _ModPat_Ramp16
+
+        ; Map from the standard palette.
         clrf    MapWS + MapWS_SourceBAPMStatus
         movlw   LOW(BAPM_Pal_Basic)
         movwf   MapWS + MapWS_SourcePtr + 0
         movlw   HIGH(BAPM_Pal_Basic)
         movwf   MapWS + MapWS_SourcePtr + 1
-        movf    GAState + GAS_PalettePtr + 0, W
-        movwf   MapWS + MapWS_DestPtr + 0
-        movf    GAState + GAS_PalettePtr + 1, W
-        movwf   MapWS + MapWS_DestPtr + 1
+
+        pagesel ModifyPattern_Page1
 
         movf    EffectivePatMod + PatMod_RampIxA, W
         call    _ModPat_GetRampAddr
@@ -4986,6 +5049,35 @@ ModifyPattern_Page1:
         movlw   3
         movwf   MapWS + MapWS_NumEntries
         goto    _ModPat_LoadPaletteSection
+
+_ModPat_Ramp16:
+        ; A special palette is used, one that is ordered for a single ramp.
+        ; Set the palette mapper to copy without mapping.
+        movlw   LOW(PM_Ramp16AddrTable)
+        movwf   FSR0L
+        movlw   HIGH(PM_Ramp16AddrTable)
+        movwf   FSR0H
+        movlw   NUM_RAMP16_PALETTES
+        subwf   EffectivePatMod + PatMod_RampIxA, W
+        btfsc   STATUS, C
+        clrf    EffectivePatMod + PatMod_RampIxA
+        movf    EffectivePatMod + PatMod_RampIxA, W
+        movlp   0
+        call    FetchPMWordFromTable
+        bsf     FSR0H, 7
+        movf    FSR0L, W
+        movwf   MapWS + MapWS_SourcePtr + 0
+        movf    FSR0H, W
+        movwf   MapWS + MapWS_SourcePtr + 1
+        clrf    MapWS + MapWS_SourceBAPMStatus
+        clrf    MapWS + MapWS_MapPtr + 0
+        clrf    MapWS + MapWS_MapPtr + 1
+        clrf    MapWS + MapWS_MapBAPMStatus
+        movlw   16
+        movwf   MapWS + MapWS_NumEntries
+        call    LoadMappedPalette
+        pagesel ModifyPattern_Page1
+        retlw   0
 
 _ModPat_GetRampAddr:
         movwf   Scratch0
@@ -5044,6 +5136,9 @@ ForbidAllBlackPatMod_Page1:
         retlw   0
         btfss   ModeFlags, MF_BIT_EXTERNALRAMPS
         retlw   0
+        btfsc   ModeFlags, MF_BIT_RAMP16
+        retlw   0
+
         movf    EffectivePatMod + PatMod_RampIxA, W
         xorlw   R_BLK
         movwf   Scratch0
@@ -5202,11 +5297,15 @@ _APAM_PatBtnPressed:
         movwf   FSR0H
         movf    PatAdjItemIx, W
         andlw   3
+        btfsc   ModeFlags, MF_BIT_RAMP16
+        andlw   1
         addwf   FSR0L, F
         movlw   0
         addwfc  FSR0H, F
         incf    INDF0, F
         movlw   NUM_RAMPS
+        btfsc   ModeFlags, MF_BIT_RAMP16
+        movlw   NUM_RAMP16_PALETTES
         movf    PatAdjItemIx, F
         btfsc   STATUS, Z
         movlw   8
@@ -5225,6 +5324,15 @@ _APAM_ModeBtnPressed:
         bra    _APAM_SignalShutdown
         bra     _APAM_Done
 _APAM_NextItemToAdjust:
+        btfss   ModeFlags, MF_BIT_EXTERNALRAMPS
+        bra     _APAM_NextItem_SkipR16
+        btfss   ModeFlags, MF_BIT_RAMP16
+        bra     _APAM_NextItem_SkipR16
+        incf    PatAdjItemIx, F
+        movlw   1
+        andwf   PatAdjItemIx, F
+        bra     _APAM_NextItem_Selected
+_APAM_NextItem_SkipR16:
         movf    PaletteUsageMetrics + PUM_NumUserRamps, W
         subwf   PatAdjItemIx, W
         btfsc   STATUS, C
@@ -5235,18 +5343,40 @@ _APAM_NextItemToAdjust:
 _APAM_NextItem_BackToTempo:
         clrw
         andwf   PatAdjItemIx, F
+_APAM_NextItem_Selected:
         ; Fall through to _APAM_ShowValue
 
 _APAM_ShowValue:
+        btfss   ModeFlags, MF_BIT_EXTERNALRAMPS
+        bra     _APAM_ShowV_UserRampsOrTempo
+        btfss   ModeFlags, MF_BIT_RAMP16
+        bra     _APAM_ShowV_UserRampsOrTempo
+        movf    PatAdjItemIx, W
+        btfsc   STATUS, Z
+        bra     _APAM_ShowV_UserRampsOrTempo
+_APAM_ShowV_Ramp16:
+        movlw   SYSPAT_PAM_RAMP16IX_CUE
+        call    GetEnumeratedSysPatAddr
+        call    LoadPattern
+        call    UpdateEffectivePatMod
+        call    ModifyPattern_Tramp0
+        bra     _APAM_ShowValue_HaveCue
+_APAM_ShowV_UserRampsOrTempo:
+        clrf    Scratch2
+        btfsc   ModeFlags, MF_BIT_RAMP16
+        bsf     Scratch2, 0
+        bcf     ModeFlags, MF_BIT_RAMP16
         movlw   SYSPAT_PAM_VALUE_CUE
         call    GetEnumeratedSysPatAddr
         call    LoadPattern
         call    UpdateEffectivePatMod
         call    ModifyPattern_Tramp0
+        btfsc   Scratch2, 0
+        bsf     ModeFlags, MF_BIT_RAMP16
         movf    PatAdjItemIx, W
         btfsc   STATUS, Z
         bra     _APAM_ShowValue_TempoIx
-_APAM_ShowValue_RampIx
+_APAM_ShowValue_RampIx:
         addlw   8
         bra     _APAM_ShowValue_HaveFrIx
 _APAM_ShowValue_TempoIx:
@@ -5254,9 +5384,11 @@ _APAM_ShowValue_TempoIx:
         andlw   7
 _APAM_ShowValue_HaveFrIx:
         call    JumpToAnimFrame
+_APAM_ShowValue_HaveCue:
         bsf     ModeFlags, MF_BIT_CUE
         movlw   EDITOR_CUE_TIME_PWM_CYCLES
         movwf   Scratch2
+_APAM_ShowValue_Done:
 
 _APAM_SkipButtonPress:
 
@@ -5300,6 +5432,17 @@ _APAM_SignalShutdown:
 
 
 AnalysePaletteUse_Page1:
+; Examine the colour indices used by a pattern.
+;
+; The highest numbered user ramp that can be accessed by the pattern editor
+; is determined by the highest colour index in the pattern that falls within
+; the range of indices spaned by the user ramps.
+;
+; In: GAState loaded with a pattern
+; Out: PaletteUsageMetrics.PUM_IsPaletted
+;      PaletteUsageMetrics.PUM_HighestPalIx
+;      PaletteUsageMetrics.PUM_NumUserRamps
+
         clrf    PaletteUsageMetrics + PUM_IsPaletted
         clrf    PaletteUsageMetrics + PUM_HighestPalIx
         clrf    PaletteUsageMetrics + PUM_NumUserRamps
@@ -5417,27 +5560,26 @@ _APU_Acc_NoNewHighURPalIx:
 BAPM_Pal_System:
   resetenum
   bablock
-  enumdat SYS_BLK,    dbvrgb, 0x000000  ; Black
-  enumdat SYS_DGRY,   dbvrgb, 0x0B0808  ; Dark Grey
-  enumdat SYS_RED,    dbvrgb, 0x2F0000  ; Red
-  enumdat SYS_BLZ,    dbvrgb, 0x440E00  ; Orange
-  enumdat SYS_YEL,    dbvrgb, 0x321400  ; Bogan Yellow
-  enumdat SYS_GRN,    dbvrgb, 0x22CC00  ; Bright Green
-  enumdat SYS_SGR,    dbvrgb, 0x009C2C  ; Sea Green
-  enumdat SYS_BLU,    dbvrgb, 0x000035  ; Blue
-  enumdat SYS_MAG,    dbvrgb, 0x770061  ; Magenta
-  enumdat SYS_XWHT,   dbvrgb, 0xFFFFFF  ; Full White
-  enumdat SYS_XRED,   dbvrgb, 0xFF0000  ; Full Red
-  enumdat SYS_GRN1,   dbvrgb, 0x005000  ; Medium Green
-  enumdat SYS_VIO,    dbvrgb, 0x1F0038  ; Violet
-  enumdat SYS_SKY,    dbvrgb, 0x00132F  ; Sky Blue
-  enumdat SYS_SGR1,   dbvrgb, 0x00340D  ; Medium Sea Green
-  ;enumdat SYS_CYN,    dbvrgb, 0x003333  ; Cyan
-  enumdat SYS_IIX4,   dbvrgb, 0x0C0C0C  ; Test of Intensity Index 4
-  enumdat SYS_IIX3,   dbvrgb, 0x191919  ; Test of Intensity Index 3
-  enumdat SYS_IIX2,   dbvrgb, 0x333333  ; Test of Intensity Index 2
-  enumdat SYS_IIX1,   dbvrgb, 0x666666  ; Test of Intensity Index 1
-  enumdat SYS_IIX0,   dbvrgb, 0xCCCCCC  ; Test of Intensity Index 5
+  enumdat SYS_BLK,    dbargb, 0x000000  ; Black
+  enumdat SYS_DGRY,   dbargb, 0x0B0808  ; Dark Grey
+  enumdat SYS_RED,    dbargb, 0x2F0000  ; Red
+  enumdat SYS_BLZ,    dbargb, 0x440E00  ; Orange
+  enumdat SYS_YEL,    dbargb, 0x321400  ; Bogan Yellow
+  enumdat SYS_GRN,    dbargb, 0x22CC00  ; Bright Green
+  enumdat SYS_SGR,    dbargb, 0x009C2C  ; Sea Green
+  enumdat SYS_BLU,    dbargb, 0x000035  ; Blue
+  enumdat SYS_MAG,    dbargb, 0x770061  ; Magenta
+  enumdat SYS_XWHT,   dbargb, 0xFFFFFF  ; Full White
+  enumdat SYS_XRED,   dbargb, 0xFF0000  ; Full Red
+  enumdat SYS_GRN1,   dbargb, 0x005000  ; Medium Green
+  enumdat SYS_VIO,    dbargb, 0x1F0038  ; Violet
+  enumdat SYS_SKY,    dbargb, 0x00132F  ; Sky Blue
+  enumdat SYS_SGR1,   dbargb, 0x00340D  ; Medium Sea Green
+  enumdat SYS_IIX4,   dbargb, 0x0C0C0C  ; Test of Intensity Index 4
+  enumdat SYS_IIX3,   dbargb, 0x191919  ; Test of Intensity Index 3
+  enumdat SYS_IIX2,   dbargb, 0x333333  ; Test of Intensity Index 2
+  enumdat SYS_IIX1,   dbargb, 0x666666  ; Test of Intensity Index 1
+  enumdat SYS_IIX0,   dbargb, 0xCCCCCC  ; Test of Intensity Index 5
   endbab
 SYS_PALETTE_LENGTH equ ENUMIX
 
@@ -5455,7 +5597,7 @@ PM_Frs_Err_Flash1LED:
 
 PM_Map_SpuriousError:
         bablock
-        dbv2b    0, SYS_GRN
+        dba2b    0, SYS_GRN
         endbab
 PM_Pat_SpuriousError:
         pattern PATDF_4C, 2, 100, PATSF_BAPM_PMF, 2
@@ -5463,7 +5605,7 @@ PM_Pat_SpuriousError:
 
 PM_Map_Err_InvalidFormat:
         bablock
-        dbv2b    0, SYS_RED
+        dba2b    0, SYS_RED
         endbab
 PM_Pat_Err_InvalidFormat:
         pattern PATDF_4C, 2, 100, PATSF_BAPM_PMF, 2
@@ -5471,7 +5613,7 @@ PM_Pat_Err_InvalidFormat:
 
 PM_Map_Err_NullPalette:
         bablock
-        dbv2b    0, SYS_YEL
+        dba2b    0, SYS_YEL
         endbab
 PM_Pat_Err_NullPalette:
         pattern PATDF_4C, 2, 100, PATSF_BAPM_PMF, 2
@@ -5479,7 +5621,7 @@ PM_Pat_Err_NullPalette:
 
 PM_Map_Err_PatternTooLarge:
         bablock
-        dbv2b    0, SYS_MAG
+        dba2b    0, SYS_MAG
         endbab
 PM_Pat_Err_PatternTooLarge:
         pattern PATDF_4C, 2, 100, PATSF_BAPM_PMF, 2
@@ -5527,8 +5669,8 @@ PM_Pat_LPMenu_Mode:
         pf256c   16,    0,        0,        0
         pf256c    9, SYS_DGRY, SYS_DGRY, SYS_DGRY
         ; Jump to Favourites
-        pf256c   16, SYS_BLU, SYS_SGR1, SYS_BLU
-        pf256c    9, SYS_BLU, SYS_SGR1, SYS_BLU
+        pf256c   16, SYS_BLU,  SYS_SGR1, SYS_BLU
+        pf256c    9, SYS_BLU,  SYS_SGR1, SYS_BLU
         ; Off
         pf256c    2, SYS_XRED, SYS_XRED, SYS_XRED
         pf256c    2, SYS_RED,  SYS_XRED, SYS_RED
@@ -5663,7 +5805,7 @@ PM_Pat_LPMenu_PatAdjMode_Mode:
         pf256c   16,    0,        0,        0
         pf256c    9, SYS_DGRY, SYS_DGRY, SYS_DGRY
         ; Exit adjustment mode, keeping changes.
-        pf256c   80, SYS_YEL,  SYS_YEL,  SYS_YEL
+        pf256c   60, SYS_YEL,  SYS_YEL,  SYS_YEL
         pf256c   21, SYS_YEL,  SYS_YEL,  SYS_YEL
         ; Off
         pf256c    2, SYS_XRED, SYS_XRED, SYS_XRED
@@ -5676,7 +5818,7 @@ PM_Pat_LPMenu_PatAdjMode_Mode:
 
 PM_Map_Menu_Intensity:
         bablock
-        dbv6b     0, SYS_IIX4, SYS_IIX3, SYS_IIX2, SYS_IIX1, SYS_IIX0
+        dba6b     0, SYS_IIX4, SYS_IIX3, SYS_IIX2, SYS_IIX1, SYS_IIX0
         endbab
 PM_Pat_Menu_Intensity:
         pattern PATDF_16C, 6, 1, PATSF_BAPM_PMF, 5
@@ -5691,7 +5833,7 @@ PM_Pat_Menu_Intensity:
 
 PM_Map_Menu_LockLUP:
         bablock
-        dbv4b    0, SYS_RED, SYS_YEL, SYS_SGR
+        dba4b    0, SYS_RED, SYS_YEL, SYS_SGR
         endbab
 PM_Pat_Menu_LockLUP:
         pattern PATDF_4C, 4, 1, PATSF_BAPM_PMF, 2
@@ -5703,7 +5845,7 @@ PM_Pat_Menu_LockLUP:
 
 PM_Map_Menu_Restrictions:
         bablock
-        dbv5b    0, SYS_RED, SYS_YEL, SYS_SKY, SYS_GRN1
+        dba5b    0, SYS_RED, SYS_YEL, SYS_SKY, SYS_GRN1
         endbab
 PM_Pat_Menu_Restrictions:
         pattern PATDF_16C, 5, 1, PATSF_BAPM_PMF, 4
@@ -5720,7 +5862,7 @@ PM_Pat_Menu_Restrictions:
 
 PM_Map_Cue_Wrap:
         bablock
-        dbv3b    0, SYS_DGRY, 8
+        dba3b    0, SYS_DGRY, 8
         endbab
 PM_Pat_Cue_Wrap:
         pattern PATDF_4C, 2, 12, PATSF_BAPM_PMF, 5
@@ -5743,7 +5885,7 @@ PM_Frs_Cue_EnterStdsOrFavs:
 
 PM_Map_Cue_EnterFavs:
         bablock
-        dbv2b    0, SYS_SGR
+        dba2b    0, SYS_SGR
         endbab
 PM_Pat_Cue_EnterFavs:
         pattern PATDF_4C, 2, 25, PATSF_BAPM_PMF, 4
@@ -5753,7 +5895,7 @@ PM_Pat_Cue_EnterFavs:
 
 PM_Map_Cue_EnterStds:
         bablock
-        dbv2b    0, SYS_BLU
+        dba2b    0, SYS_BLU
         endbab
 PM_Pat_Cue_EnterStds:
         pattern PATDF_4C, 2, 25, PATSF_BAPM_PMF, 4
@@ -5763,8 +5905,8 @@ PM_Pat_Cue_EnterStds:
 
 BAPM_Map_PAM_ValueCue:
         bablock
-        dbv10b  BLK, RED, RED1, RED2, GRN, GRN1, GRN2, BLU, BLU1, BLU2
-        dbv4b   BLK, BLU2, ORA, SYS_SKY
+        dba10b  BLK, RED, RED1, RED2, GRN, GRN1, GRN2, BLU, BLU1, BLU2
+        dba4b   BLK, BLU2, ORA, SYS_SKY
         endbab
 BAPM_Frs_PAM_ValueCue:
         bablock
@@ -5784,6 +5926,13 @@ BAPM_Frs_PAM_ValueCue:
 PM_Pat_PAM_ValueCue:
         pattern PATDF_16C, 14, 10, PATSF_BAPM_PMF, 12
         dw BAPM_Pal_Basic, BAPM_Map_PAM_ValueCue, BAPM_Frs_PAM_ValueCue
+
+PM_Pat_PAM_Ramp16IxCue:
+        pattern PATDF_16C, 16, 1, PATSF_BAPM_PMF, 1
+        dw BAPM_Pal_Ramp16_Flame, 0, 0
+        bablock
+        pf16c     1,  15, 11,  7
+        endbab
 
 
 ;------------------------------------------------------------------------------
@@ -5813,6 +5962,7 @@ PM_SysPatTable:
   enumdat SYSPAT_CUE_ENTER_FAVS,          dw, PM_Pat_Cue_EnterFavs
   enumdat SYSPAT_CUE_ENTER_STDS,          dw, PM_Pat_Cue_EnterStds
   enumdat SYSPAT_PAM_VALUE_CUE,           dw, PM_Pat_PAM_ValueCue
+  enumdat SYSPAT_PAM_RAMP16IX_CUE,        dw, PM_Pat_PAM_Ramp16IxCue
 
 
 ;------------------------------------------------------------------------------
@@ -5824,64 +5974,72 @@ BAPM_Pal_Basic:
   resetenum
   bablock
   ; Greyscale
-  enumdat BLK,     dbvrgb, 0x000000  ;  0: Black
-  enumdat WHT2,    dbvrgb, 0x121514  ;  1: Grey
-  enumdat WHT1,    dbvrgb, 0x3F4845  ;  2: Silver
-  enumdat WHT,     dbvrgb, 0xB5CEC5  ;  3: Standard white
-  enumdat XEN,     dbvrgb, 0xD0DEE4  ;  4: Xenon flash
+  enumdat BLK,     dbargb, 0x000000  ;  0: Black
+  enumdat WHT2,    dbargb, 0x121514  ;  1: Grey
+  enumdat WHT1,    dbargb, 0x3F4845  ;  2: Silver
+  enumdat WHT,     dbargb, 0xB5CEC5  ;  3: Standard white
+  enumdat XEN,     dbargb, 0xCADEE4  ;  4: Xenon flash
   ; Main colours
-  enumdat RED,     dbvrgb, 0xCC0000  ;  5: Red
-  enumdat BLZ,     dbvrgb, 0xC81200  ;  6: Blaze Orange
-  enumdat ORA,     dbvrgb, 0xE02D00  ;  7: Orange
-  enumdat YEL,     dbvrgb, 0xEE6A00  ;  8: Yellow
-  enumdat SNT,     dbvrgb, 0x559900  ;  9: Snot
-  enumdat GRN,     dbvrgb, 0x00BB00  ; 10: Green
-  enumdat SGR,     dbvrgb, 0x00AC2C  ; 11: Sea Green
-  enumdat CYN,     dbvrgb, 0x008899  ; 12: Cyan
-  enumdat SKY,     dbvrgb, 0x003799  ; 13: Sky Blue
-  enumdat BLU,     dbvrgb, 0x0000BB  ; 14: Blue
-  enumdat PUR,     dbvrgb, 0x4800CC  ; 15: Purple
-  enumdat VIO,     dbvrgb, 0x7000C4  ; 16: Violet
-  enumdat MAG,     dbvrgb, 0xAA0090  ; 17: Magenta
-  enumdat CER,     dbvrgb, 0xD2002C  ; 18: Cerise
-  enumdat PNK,     dbvrgb, 0xCC2235  ; 19: Pink
+  enumdat RED,     dbargb, 0xCC0000  ;  5: Red
+  enumdat BLZ,     dbargb, 0xC81200  ;  6: Blaze Orange
+  enumdat ORA,     dbargb, 0xE02D00  ;  7: Orange
+  enumdat YEL,     dbargb, 0xEE6A00  ;  8: Yellow
+  enumdat SNT,     dbargb, 0x559900  ;  9: Snot
+  enumdat GRN,     dbargb, 0x00BB00  ; 10: Green
+  enumdat SGR,     dbargb, 0x00AC2C  ; 11: Sea Green
+  enumdat CYN,     dbargb, 0x008899  ; 12: Cyan
+  enumdat SKY,     dbargb, 0x003799  ; 13: Sky Blue
+  enumdat BLU,     dbargb, 0x0000BB  ; 14: Blue
+  enumdat PUR,     dbargb, 0x4800CC  ; 15: Purple
+  enumdat VIO,     dbargb, 0x7000C4  ; 16: Violet
+  enumdat MAG,     dbargb, 0xAA0090  ; 17: Magenta
+  enumdat CER,     dbargb, 0xD2002C  ; 18: Cerise
+  enumdat PNK,     dbargb, 0xCC2235  ; 19: Pink
   ; Medium intensity colours
-  enumdat RED1,    dbvrgb, 0x5C0000  ; 20: Medium Red
-  enumdat BLZ1,    dbvrgb, 0x5A0800  ; 21: Medium Blaze Orange
-  enumdat ORA1,    dbvrgb, 0x651400  ; 22: Medium Orange
-  enumdat YEL1,    dbvrgb, 0x6B3000  ; 23: Medium Yellow
-  enumdat SNT1,    dbvrgb, 0x264500  ; 24: Medium Snot
-  enumdat GRN1,    dbvrgb, 0x005400  ; 25: Medium Green
-  enumdat SGR1,    dbvrgb, 0x004D14  ; 26: Medium Sea Green
-  enumdat CYN1,    dbvrgb, 0x003D45  ; 27: Medium Cyan
-  enumdat SKY1,    dbvrgb, 0x001945  ; 28: Medium Sky Blue
-  enumdat BLU1,    dbvrgb, 0x000054  ; 29: Medium Blue
-  enumdat PUR1,    dbvrgb, 0x20005C  ; 30: Medium Purple
-  enumdat VIO1,    dbvrgb, 0x320058  ; 31: Medium Violet
-  enumdat MAG1,    dbvrgb, 0x4D0041  ; 32: Medium Magenta
-  enumdat CER1,    dbvrgb, 0x5F0014  ; 33: Medium Cerise
-  enumdat PNK1,    dbvrgb, 0x5C0F18  ; 34: Medium Pink
+  enumdat RED1,    dbargb, 0x720000  ; 20: Medium Red
+  enumdat BLZ1,    dbargb, 0x700A00  ; 21: Medium Blaze Orange
+  enumdat ORA1,    dbargb, 0x7D1900  ; 22: Medium Orange
+  enumdat YEL1,    dbargb, 0x853B00  ; 23: Medium Yellow
+  enumdat SNT1,    dbargb, 0x305600  ; 24: Medium Snot
+  enumdat GRN1,    dbargb, 0x006900  ; 25: Medium Green
+  enumdat SGR1,    dbargb, 0x006019  ; 26: Medium Sea Green
+  enumdat CYN1,    dbargb, 0x004C56  ; 27: Medium Cyan
+  enumdat SKY1,    dbargb, 0x001F56  ; 28: Medium Sky Blue
+  enumdat BLU1,    dbargb, 0x000069  ; 29: Medium Blue
+  enumdat PUR1,    dbargb, 0x280072  ; 30: Medium Purple
+  enumdat VIO1,    dbargb, 0x3F006E  ; 31: Medium Violet
+  enumdat MAG1,    dbargb, 0x5F0051  ; 32: Medium Magenta
+  enumdat CER1,    dbargb, 0x760019  ; 33: Medium Cerise
+  enumdat PNK1,    dbargb, 0x72131E  ; 34: Medium Pink
   ; Low intensity colours
-  enumdat RED2,    dbvrgb, 0x100000  ; 35: Dark Red
-  enumdat BLZ2,    dbvrgb, 0x100100  ; 36: Dark Blaze Orange
-  enumdat ORA2,    dbvrgb, 0x120400  ; 37: Dark Orange
-  enumdat YEL2,    dbvrgb, 0x130800  ; 38: Dark Yellow
-  enumdat SNT2,    dbvrgb, 0x070C00  ; 39: Dark Snot
-  enumdat GRN2,    dbvrgb, 0x000F00  ; 40: Dark Green
-  enumdat SGR2,    dbvrgb, 0x000E04  ; 41: Dark Sea Green
-  enumdat CYN2,    dbvrgb, 0x000B0C  ; 42: Dark Cyan
-  enumdat SKY2,    dbvrgb, 0x00040C  ; 43: Dark Sky Blue
-  enumdat BLU2,    dbvrgb, 0x00000F  ; 44: Dark Blue
-  enumdat PUR2,    dbvrgb, 0x060010  ; 45: Dark Purple
-  enumdat VIO2,    dbvrgb, 0x090010  ; 46: Dark Violet
-  enumdat MAG2,    dbvrgb, 0x0E000C  ; 47: Dark Magenta
-  enumdat CER2,    dbvrgb, 0x110004  ; 48: Dark Cerise
-  enumdat PNK2,    dbvrgb, 0x100304  ; 49: Dark Pink
-  ; Special colours
-  enumdat RED3,    dbvrgb, 0x080000  ; 50: ; Darkest Red
-  enumdat ORA3,    dbvrgb, 0x090200  ; 51: ; Darkest Orange
-  enumdat GRN3,    dbvrgb, 0x000800  ; 52: : Darkest Green
-  enumdat BLU3,    dbvrgb, 0x000008  ; 53: : Darkest Blue
+  enumdat RED2,    dbargb, 0x100000  ; 35: Dark Red
+  enumdat BLZ2,    dbargb, 0x100100  ; 36: Dark Blaze Orange
+  enumdat ORA2,    dbargb, 0x120400  ; 37: Dark Orange
+  enumdat YEL2,    dbargb, 0x130800  ; 38: Dark Yellow
+  enumdat SNT2,    dbargb, 0x070C00  ; 39: Dark Snot
+  enumdat GRN2,    dbargb, 0x000F00  ; 40: Dark Green
+  enumdat SGR2,    dbargb, 0x000E04  ; 41: Dark Sea Green
+  enumdat CYN2,    dbargb, 0x000B0C  ; 42: Dark Cyan
+  enumdat SKY2,    dbargb, 0x00040C  ; 43: Dark Sky Blue
+  enumdat BLU2,    dbargb, 0x00000F  ; 44: Dark Blue
+  enumdat PUR2,    dbargb, 0x060010  ; 45: Dark Purple
+  enumdat VIO2,    dbargb, 0x090010  ; 46: Dark Violet
+  enumdat MAG2,    dbargb, 0x0E000C  ; 47: Dark Magenta
+  enumdat CER2,    dbargb, 0x110004  ; 48: Dark Cerise
+  enumdat PNK2,    dbargb, 0x100304  ; 49: Dark Pink
+  ; Special colours, including dark ones which risk rounding to black
+  enumdat FLA,     dbargb, 0xCC3F09  ; 50: : Flame centre
+  enumdat FLA1,    dbargb, 0x701602  ; 51: : Flame periphery
+  enumdat FLA2,    dbargb, 0x150300  ; 52: : Flame tip
+  enumdat FLA3,    dbargb, 0x050100  ; 53: : Flame background
+  enumdat BLP1,    dbargb, 0x0C006B  ; 54: : Medium Blurple
+  enumdat PSG,     dbargb, 0x2CCC48  ; 55: : Pale Sea Green
+  enumdat RED3,    dbargb, 0x040000  ; 56: : Darkest Red
+  enumdat ORA3,    dbargb, 0x040100  ; 57: : Darkest Orange
+  enumdat GRN3,    dbargb, 0x000400  ; 58: : Darkest Green
+  enumdat BLU3,    dbargb, 0x000004  ; 59: : Darkest Blue
+  enumdat VIO3,    dbargb, 0x030005  ; 59: : Darkest Blue
+  enumdat PUR3,    dbargb, 0x020005  ; 60: : Darkest Purple
   endbab
 BASIC_PALETTE_LENGTH equ ENUMIX
 
@@ -5897,44 +6055,219 @@ BAPM_ColourRamps:
   resetenum
   bablock
   ; Plain colours
-  enumdat R_RED,        dbvl, RAMP4(0, RED,  RED1, RED2)
-  enumdat R_BLZ,        dbvl, RAMP4(0, BLZ,  BLZ1, BLZ2)
-  enumdat R_ORA,        dbvl, RAMP4(0, ORA,  ORA1, ORA2)
-  enumdat R_YEL,        dbvl, RAMP4(0, YEL,  YEL1, YEL2)
-  enumdat R_SNT,        dbvl, RAMP4(0, SNT,  SNT1, SNT2)
-  enumdat R_GRN,        dbvl, RAMP4(0, GRN,  GRN1, GRN2)
-  enumdat R_SGR,        dbvl, RAMP4(0, SGR,  SGR1, SGR2)
-  enumdat R_CYN,        dbvl, RAMP4(0, CYN,  CYN1, CYN2)
-  enumdat R_SKY,        dbvl, RAMP4(0, SKY,  SKY1, SKY2)
-  enumdat R_BLU,        dbvl, RAMP4(0, BLU,  BLU1, BLU2)
-  enumdat R_PUR,        dbvl, RAMP4(0, PUR,  PUR1, PUR2)
-  enumdat R_VIO,        dbvl, RAMP4(0, VIO,  VIO1, VIO2)
-  enumdat R_MAG,        dbvl, RAMP4(0, MAG,  MAG1, MAG2)
-  enumdat R_CER,        dbvl, RAMP4(0, CER,  CER1, CER2)
-  enumdat R_PNK,        dbvl, RAMP4(0, PNK,  PNK1, PNK2)
-  enumdat R_WHT,        dbvl, RAMP4(0, WHT,  WHT1, WHT2)
-  enumdat R_BLK,        dbvl, RAMP4(0, BLK,  BLK,  BLK)
-  enumdat R_RED1,       dbvl, RAMP4(0, RED1, RED2, RED3)
-  enumdat R_ORA1,       dbvl, RAMP4(0, ORA1, ORA2, ORA3)
-  enumdat R_GRN1,       dbvl, RAMP4(0, GRN1, GRN2, GRN3)
-  enumdat R_BLU1,       dbvl, RAMP4(0, BLU1, BLU2, BLU3)
-  ; Chromatic abberations
-  enumdat R_FIRE,       dbvl, RAMP4(0, ORA,  BLZ1, RED2)
-  enumdat R_ICE,        dbvl, RAMP4(0, CYN,  SKY1, BLU2)
-  enumdat R_BLURPLE,    dbvl, RAMP4(0, BLU,  VIO1, MAG2)
-  enumdat R_MINT,       dbvl, RAMP4(0, WHT,  SGR,  GRN2)
-  enumdat R_STRAWBRY,   dbvl, RAMP4(0, PNK,  CER1, RED2)
-  enumdat R_GOLD,       dbvl, RAMP4(0, YEL,  ORA1, BLZ2)
-  enumdat R_ARC,        dbvl, RAMP4(0, XEN,  PUR,  VIO2)
-  enumdat R_BUNSEN,     dbvl, RAMP4(0, PUR,  PUR1, BLU2)
+  enumdat R_RED,        dbal, RAMP4(0, RED,  RED1, RED2)
+  enumdat R_BLZ,        dbal, RAMP4(0, BLZ,  BLZ1, BLZ2)
+  enumdat R_ORA,        dbal, RAMP4(0, ORA,  ORA1, ORA2)
+  enumdat R_YEL,        dbal, RAMP4(0, YEL,  YEL1, YEL2)
+  enumdat R_SNT,        dbal, RAMP4(0, SNT,  SNT1, SNT2)
+  enumdat R_GRN,        dbal, RAMP4(0, GRN,  GRN1, GRN2)
+  enumdat R_SGR,        dbal, RAMP4(0, SGR,  SGR1, SGR2)
+  enumdat R_CYN,        dbal, RAMP4(0, CYN,  CYN1, CYN2)
+  enumdat R_SKY,        dbal, RAMP4(0, SKY,  SKY1, SKY2)
+  enumdat R_BLU,        dbal, RAMP4(0, BLU,  BLU1, BLU2)
+  enumdat R_PUR,        dbal, RAMP4(0, PUR,  PUR1, PUR2)
+  enumdat R_VIO,        dbal, RAMP4(0, VIO,  VIO1, VIO2)
+  enumdat R_MAG,        dbal, RAMP4(0, MAG,  MAG1, MAG2)
+  enumdat R_CER,        dbal, RAMP4(0, CER,  CER1, CER2)
+  enumdat R_PNK,        dbal, RAMP4(0, PNK,  PNK1, PNK2)
+  enumdat R_WHT,        dbal, RAMP4(0, WHT,  WHT1, WHT2)
+  enumdat R_BLK,        dbal, RAMP4(0, BLK,  BLK,  BLK)
+  enumdat R_RED1,       dbal, RAMP4(0, RED1, RED2, RED3)
+  enumdat R_ORA1,       dbal, RAMP4(0, ORA1, ORA2, ORA3)
+  enumdat R_GRN1,       dbal, RAMP4(0, GRN1, GRN2, GRN3)
+  enumdat R_BLU1,       dbal, RAMP4(0, BLU1, BLU2, BLU3)
+  enumdat R_VIO1,       dbal, RAMP4(0, VIO1, VIO2, VIO3)
+  enumdat R_PUR1,       dbal, RAMP4(0, PUR1, PUR2, PUR3)
+  ; Chromatic aberrations
+  enumdat R_FIRE,       dbal, RAMP4(0, ORA,  BLZ1, RED2)
+  enumdat R_ICE,        dbal, RAMP4(0, CYN,  SKY1, BLU2)
+  enumdat R_BLURPLE,    dbal, RAMP4(0, PUR,  BLP1, BLU2)
+  enumdat R_GOLD,       dbal, RAMP4(0, YEL,  ORA1, BLZ2)
+  enumdat R_MINT,       dbal, RAMP4(0, PSG,  SGR1, GRN2)
+  enumdat R_BUNSEN,     dbal, RAMP4(0, SKY,  BLU1, PUR2)
+  enumdat R_FLAME,      dbal, RAMP4(0, FLA,  FLA1, FLA2)
+  enumdat R_STRAWBRY,   dbal, RAMP4(0, PNK,  CER1, RED2)
   ; Non-black backgrounds
-  enumdat R_PURHAZE_A,  dbvl, RAMP4(MAG2, ORA,  BLZ,  RED1)
-  enumdat R_PURHAZE_B,  dbvl, RAMP4(MAG2, BLU,  PUR1, VIO1)
-  enumdat R_TIEDYED_A,  dbvl, RAMP4(BLZ2, SKY,  YEL,  CER1)
-  enumdat R_TIEDYED_B,  dbvl, RAMP4(BLZ2, BLZ,  GRN1, BLU1)
-  enumdat R_RED_MIST,   dbvl, RAMP4(RED2, BLZ,  RED,  RED1)
+  enumdat R_BUNSEN_E,   dbal, RAMP4(PUR3, SKY,  BLU1, PUR2)
+  enumdat R_FLAME_E,    dbal, RAMP4(FLA3, FLA,  FLA1, FLA2)
+  enumdat R_PURHAZE_A,  dbal, RAMP4(MAG2, ORA,  BLZ,  CER1)
+  enumdat R_PURHAZE_B,  dbal, RAMP4(MAG2, BLU,  PUR1, VIO1)
+  enumdat R_TIEDYED_A,  dbal, RAMP4(BLZ2, SKY,  YEL,  CER1)
+  enumdat R_TIEDYED_B,  dbal, RAMP4(BLZ2, BLZ,  GRN1, BLU1)
+  enumdat R_RED_MIST,   dbal, RAMP4(RED3, BLZ,  RED,  RED2)
   endbab
 NUM_RAMPS equ ENUMIX
+  if NUM_RAMPS > 64
+    error "Too many colour ramps! (64 is the absolute maximum.)"
+    ; If NUM_BANKS = 16, NUM_RAMPS must be at most 63.
+  endif
+
+
+;------------------------------------------------------------------------------
+; Ramp16 palettes
+;------------------------------------------------------------------------------
+
+
+BAPM_Pal_Ramp16_Flame:
+; Realistic, slightly pastel orange flame
+        bablock
+        dbvrgb  0x000000
+        dbvrgb  0x010000
+        dbvrgb  0x010000
+        dbvrgb  0x030000
+        dbvrgb  0x060000
+        dbvrgb  0x080000
+        dbvrgb  0x0A0000
+        dbvrgb  0x100100
+        dbvrgb  0x210400
+        dbvrgb  0x370800
+        dbvrgb  0x4F0D01
+        dbvrgb  0x691402
+        dbvrgb  0x871F03
+        dbvrgb  0xA32B05
+        dbvrgb  0xBA3607
+        dbvrgb  0xCC3F09
+        endbab
+
+BAPM_Pal_Ramp16_Blaze:
+; Based on the standard Fire colour ramp
+        bablock
+        dbargb  0x000000
+        dbargb  0x010000
+        dbargb  0x010000
+        dbargb  0x020000
+        dbargb  0x050000
+        dbargb  0x050000
+        dbargb  0x040000
+        dbargb  0x090000
+        dbargb  0x1A0100
+        dbargb  0x310200
+        dbargb  0x490400
+        dbargb  0x660800
+        dbargb  0x891100
+        dbargb  0xAC1B00
+        dbargb  0xCA2500
+        dbargb  0xE02D00
+        endbab
+
+BAPM_Pal_Ramp16_RedFire:
+; Reddish fire based on Red Mist
+        bablock
+        dbargb  0x000000
+        dbargb  0x010000
+        dbargb  0x010000
+        dbargb  0x020000
+        dbargb  0x060000
+        dbargb  0x090000
+        dbargb  0x0B0000
+        dbargb  0x130000
+        dbargb  0x2D0000
+        dbargb  0x500100
+        dbargb  0x760200
+        dbargb  0x980400
+        dbargb  0xB50900
+        dbargb  0xC70F00
+        dbargb  0xD11500
+        dbargb  0xDA1A00
+        endbab
+
+BAPM_Pal_Ramp16_Flurple:
+; Blurple flame
+        bablock
+        dbargb  0x000000
+        dbargb  0x000001
+        dbargb  0x000001
+        dbargb  0x000002
+        dbargb  0x000005
+        dbargb  0x000007
+        dbargb  0x000009
+        dbargb  0x00000F
+        dbargb  0x01001F
+        dbargb  0x020035
+        dbargb  0x03004A
+        dbargb  0x0A0064
+        dbargb  0x1A0083
+        dbargb  0x3000A0
+        dbargb  0x4500B9
+        dbargb  0x5500CC
+        endbab
+
+BAPM_Pal_Ramp16_Bunsen:
+        bablock
+        dbargb  0x000000
+        dbargb  0x000001
+        dbargb  0x000001
+        dbargb  0x010003
+        dbargb  0x010006
+        dbargb  0x020008
+        dbargb  0x03000A
+        dbargb  0x030010
+        dbargb  0x030121
+        dbargb  0x02013A
+        dbargb  0x010153
+        dbargb  0x00066A
+        dbargb  0x00117F
+        dbargb  0x00208C
+        dbargb  0x002F93
+        dbargb  0x003A99
+        endbab
+
+BAPM_Pal_Ramp16_Strawberry:
+        bablock
+        dbargb  0x000000
+        dbargb  0x010000
+        dbargb  0x020000
+        dbargb  0x030000
+        dbargb  0x070000
+        dbargb  0x0A0000
+        dbargb  0x0B0000
+        dbargb  0x120000
+        dbargb  0x250002
+        dbargb  0x400006
+        dbargb  0x5C000B
+        dbargb  0x790412
+        dbargb  0x960E1E
+        dbargb  0xAD1C2C
+        dbargb  0xBE2939
+        dbargb  0xCC3342
+        endbab
+
+BAPM_Pal_Ramp16_Acrid:
+        bablock
+        dbargb  0x000000
+        dbargb  0x000100
+        dbargb  0x000100
+        dbargb  0x000200
+        dbargb  0x000500
+        dbargb  0x010800
+        dbargb  0x010A00
+        dbargb  0x040F00
+        dbargb  0x0C1B00
+        dbargb  0x152900
+        dbargb  0x1F3900
+        dbargb  0x2E4800
+        dbargb  0x455800
+        dbargb  0x5F6500
+        dbargb  0x766F00
+        dbargb  0x887700
+        endbab
+
+
+;------------------------------------------------------------------------------
+; Ramp16 palette addresses, enumerated
+;------------------------------------------------------------------------------
+
+
+PM_Ramp16AddrTable:
+  resetenum
+  enumdat R16_FLAME,      dw, BAPM_Pal_Ramp16_Flame
+  enumdat R16_BLAZE,      dw, BAPM_Pal_Ramp16_Blaze
+  enumdat R16_RED_FIRE,   dw, BAPM_Pal_Ramp16_RedFire
+  enumdat R16_FLURPLE,    dw, BAPM_Pal_Ramp16_Flurple
+  enumdat R16_BUNSEN,     dw, BAPM_Pal_Ramp16_Bunsen
+  enumdat R16_STRAWBERRY, dw, BAPM_Pal_Ramp16_Strawberry
+  enumdat R16_ACRID,      dw, BAPM_Pal_Ramp16_Acrid
+NUM_RAMP16_PALETTES equ ENUMIX
 
 
 ;------------------------------------------------------------------------------
@@ -5944,26 +6277,42 @@ NUM_RAMPS equ ENUMIX
 
 BAPM_Default_Ramps:
         bablock
-        dbv1b   BLK
-        dbv3b   ORA, BLZ1, RED2
-        dbv3b   CYN, SKY1, BLU2
-        dbv3b   WHT, WHT1, WHT2
-        dbv1b   WHT
-DEF_RL = BAPM_BYTE_OFFSET
+        dba1b   BLK
+        dba3b   ORA, BLZ1, RED2
+        dba3b   CYN, SKY1, BLU2
+        dba3b   WHT, WHT1, WHT2
+        dba1b   WHT
+DEF_RL equ BAPM_BYTE_OFFSET
         endbab
 
-
-BAPM_Map_SixSolidColoursPlusKW:
+BAPM_Map_Medley6_UXXW:
         bablock
-        dbv11b  BLK, GRN, YEL, SKY, RED, CER, SGR, WHT, WHT, WHT, WHT
+        dba1b   BLK
+        dba3b   GRN, (GRN1), (GRN2)
+        dba3b   CER, (CER1), (CER2)
+        dba3b   WHT, (WHT1), (WHT2)
+        dba4b   YEL, SKY, RED, SGR
         endbab
 
-BAPM_Map_SixSolidColoursPlusKX:
+BAPM_Map_Medley7_UXXX:
         bablock
-        dbv11b  BLK, GRN, YEL, SKY, RED, CER, SGR, WHT, WHT, WHT, XEN
+        dba1b   BLK
+        dba3b   GRN, (GRN1), (GRN2)
+        dba3b   CER, (CER1), (CER2)
+        dba3b   YEL, (YEL1), (YEL2)
+        dba4b   SKY, RED, SGR, BLU
         endbab
 
-; Triangular rainbow fade pattern
+BAPM_Map_Medley5X_UXXX:
+        bablock
+        dba1b   BLK
+        dba3b   GRN, (GRN1), (GRN2)
+        dba3b   RED, (RED1), (RED2)
+        dba3b   SKY, (SKY1), (SKY2)
+        dba4b   YEL, CER, (SGR), XEN
+        endbab
+
+; Triangular rainbow fade pattern (balanced)
 ;
 ; Each LED is lerped from primary colour to primary colour so that the
 ; secondary colours have half the intensity they would have if the
@@ -5981,7 +6330,7 @@ BAPM_Map_SixSolidColoursPlusKX:
 ;        Trine Trine Trine Trine Trine Trine Trine  . . .
 ;          0     1     2     0     1     2     0
 
-PM_Pat_TriRainbow:
+PM_Pat_BalRainbow:
         pattern PATDF_24B, 0, 1, PATSF_BAPM_F, 4
         dw  0, 0, 0
         bablock
@@ -5991,7 +6340,17 @@ PM_Pat_TriRainbow:
         pf24b   254, 1, 0x00FF01, 0xFF0100, 0x0100FF
         endbab
 
-;PM_Pat_CMYTriRainbow:
+PM_Pat_FastBalRainbow:
+        pattern PATDF_24B, 0, 1, PATSF_BAPM_F, 4
+        dw  0, 0, 0
+        bablock
+        pf24b     1, 0, 0x0000FF, 0x00FF00, 0xFF0000
+        pf24b     5, 1, 0x3300CD, 0x00CD33, 0xCD3300
+        pf24b     5, 1, 0xCD3300, 0x3300CD, 0x00CD33
+        pf24b     4, 1, 0x00CD33, 0xCD3300, 0x3300CD
+        endbab
+
+;PM_Pat_CMYRainbow:
 ;        pattern PATDF_24B, 0, 2, PATSF_BAPM_F, 4
 ;        dw  0, 0, 0
 ;        bablock
@@ -6001,7 +6360,7 @@ PM_Pat_TriRainbow:
 ;        pf24b   159, 1, 0xFF0001, 0x01FF00, 0x0001FF
 ;        endbab
 
-PM_Pat_LagTriRainbow:
+PM_Pat_LagRainbow:
         pattern PATDF_24B, 0, 4, PATSF_BAPM_F, 10
         dw  0, 0, 0
         bablock
@@ -6017,7 +6376,20 @@ PM_Pat_LagTriRainbow:
         pf24b    84, 1, 0xFF0100, 0xFF0100, 0x0100FF
         endbab
 
-PM_Pat_UnisonTriRainbow:
+PM_Pat_OutRainbow:
+        pattern PATDF_24B, 0, 4, PATSF_BAPM_F, 7
+        dw  0, 0, 0
+        bablock
+        pf24b     1, 0, 0xFF0000, 0xAA5500, 0xFF0000
+        pf24b   170, 1, 0xFF0100, 0xFF0100, 0xFF0100
+        pf24b    85, 1, 0xFF0100, 0x00FF01, 0xFF0100
+        pf24b   170, 1, 0x00FF01, 0x00FF01, 0x00FF01
+        pf24b    85, 1, 0x00FF01, 0x0100FF, 0x00FF01
+        pf24b   170, 1, 0x0100FF, 0x0100FF, 0x0100FF
+        pf24b    84, 1, 0x0100FF, 0xFF0100, 0x0100FF
+        endbab
+
+PM_Pat_UniRainbow:
         pattern PATDF_24B, 0, 16, PATSF_BAPM_F, 5
         dw  0, 0, 0
         bablock
@@ -6026,6 +6398,16 @@ PM_Pat_UnisonTriRainbow:
         pf24b   255, 1, 0xFF0100, 0xFF0100, 0xFF0100
         pf24b   255, 1, 0x00FF01, 0x00FF01, 0x00FF01
         pf24b   203, 1, 0x0100FF, 0x0100FF, 0x0100FF
+        endbab
+
+PM_Pat_FastUniRainbow:
+        pattern PATDF_24B, 0, 4, PATSF_BAPM_F, 4
+        dw  0, 0, 0
+        bablock
+        pf24b     1, 0, 0xFF0000, 0xFF0000, 0xFF0000
+        pf24b     5, 1, 0xCD3300, 0xCD3300, 0xCD3300
+        pf24b     5, 1, 0x00CD33, 0x00CD33, 0x00CD33
+        pf24b     4, 1, 0x3300CD, 0x3300CD, 0x3300CD
         endbab
 
 ;PM_Pat_HexRainbow:
@@ -6041,6 +6423,47 @@ PM_Pat_UnisonTriRainbow:
 ;        pf24b   203, 1, 0x0000FF, 0xFF0000, 0x00FF00
 ;        endbab
 
+PM_Pat_Firefly:
+        pattern PATDF_24B, 0, 1, PATSF_BAPM_F, 7
+        dw  0, 0, 0
+        bablock
+        pf24b     1, 0, 0x10DD00, 0x40FF20, 0x10DD00
+        pf24b     8, 1, 0xFEFC00, 0xF8FCFC, 0xFEFC00
+        ;               0x00BD00, 0x00DF00, 0x00BD00
+        pf24b    24, 1, 0x00FB00, 0x00FC00, 0x00FB00
+        ;               0x004500, 0x007F00, 0x004500
+        pf24b    24, 1, 0x00FE00, 0x00FD00, 0x00FE00
+        ;               0x001500, 0x003700, 0x001500
+        pf24b    21, 1, 0x00FF00, 0x00FE00, 0x00FF00
+        ;               0x000000, 0x000D00, 0x000000
+        pf24b    13, 1, 0x000000, 0x00FF00, 0x000000
+        ;               0x000000, 0x000100, 0x000000
+        pf24b     2, 1, 0x000000, 0x000000, 0x000000
+        endbab
+
+PM_Pat_IceStorm:
+        pattern PATDF_24B, 0, 1, PATSF_BAPM_F, 9
+        dw  0, 0, 0
+        bablock
+        pf24b     1, 0, 0x00FAFA, 0x000000, 0x006F6F
+        pf24b    27, 1, 0x00FDFD, 0x000000, 0x00FEFE
+        ;               0x00A9A9, 0x000000, 0x003939
+        pf24b    28, 1, 0x00FEFE, 0x000000, 0x00FEFE
+        ;               0x007171, 0x000000, 0x000101
+        pf24b     1, 0, 0x006F6F, 0x00FAFA, 0x000000
+        pf24b    27, 1, 0x00FEFE, 0x00FDFD, 0x000000
+        ;               0x003939, 0x00A9A9, 0x000000
+        pf24b    28, 1, 0x00FEFE, 0x00FEFE, 0x000000
+        ;               0x000101, 0x007171, 0x000000
+        pf24b     1, 0, 0x000000, 0x006F6F, 0x00FAFA
+        pf24b    27, 1, 0x000000, 0x00FEFE, 0x00FDFD
+        ;               0x000000, 0x003939, 0x00A9A9
+        pf24b    28, 1, 0x000000, 0x00FEFE, 0x00FEFE
+        ;               0x000000, 0x000101, 0x007171
+
+        endbab
+
+
 PM_Pat_Solid:
         pattern PATDF_4C, 4, 1, PATSF_BAPM_PMF, 1
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
@@ -6048,13 +6471,9 @@ PM_Pat_Solid:
         pf4c      1,   1,  1,  1
         endbab
 
-BAPM_Map_SolidSteps:
-        bablock
-        dbv6b   RED, SGR, PUR, BLZ, CYN, VIO
-        dbv6b   GRN, ORA, BLU, MAG, SNT, SKY
-        dbv4b   CER, YEL, PNK, WHT
-        endbab
-BAPM_Frs_SolidSteps:
+PM_Pat_SolidSteps:
+        pattern PATDF_16C, 16, 224, PATSF_BAPM_PMF, 16
+        dw BAPM_Pal_Basic, BAPM_Map_SolidSteps, 0
         bablock
         pf16c    10,   0,  0,  0
         pf16c    10,   1,  1,  1
@@ -6073,55 +6492,149 @@ BAPM_Frs_SolidSteps:
         pf16c    10,  14, 14, 14
         pf16c    10,  15, 15, 15
         endbab
-PM_Pat_SolidSteps:
-        pattern PATDF_16C, 16, 224, PATSF_BAPM_PMF, 16
-        dw BAPM_Pal_Basic, BAPM_Map_SolidSteps, BAPM_Frs_SolidSteps
-
-PM_Map_HaveYouSeenMyPoi:
+BAPM_Map_SolidSteps:
         bablock
-        dbv4b   BLK, RED1, RED2, RED3
+        dba6b   RED, SGR, PUR, BLZ, CYN, VIO
+        dba6b   GRN, ORA, BLU, MAG, SNT, SKY
+        dba4b   CER, YEL, PNK, WHT
         endbab
+
 PM_Pat_HaveYouSeenMyPoi:
-        pattern PATDF_4C, 4, 1, PATSF_BAPM_PMF, 1
+        pattern PATDF_4C, 4, 1, PATSF_BAPM_PMF, 2
         dw BAPM_Pal_Basic, PM_Map_HaveYouSeenMyPoi, 0
         bablock
-        pf4c      1,   0,  3,  0
+        pf4c      1,   0,  2,  0
+        pf4c      1,   0,  0,  0
+        endbab
+PM_Map_HaveYouSeenMyPoi:
+        ; In the darker ramps, the darkest colour may appear black when the
+        ; global intensity is set low. It is important to never allow a fully
+        ; black display. This pattern is used by the system to indicate that
+        ; the colour ramp selected would made the poi appear to be off. It is
+        ; also available to the user to make the poi easy to find in the dark.
+        bablock
+        dba4b   BLK, PNK1, PNK2, (RED2)
         endbab
 
+PM_Pat_Flash1:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Flashy
+PM_Pat_Flash2:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Flashy
+PM_Pat_Flash3:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Flashy
 BAPM_Frs_Flashy:
         bablock
         pf16c     1,   1,  1,  1
         pf16c     1,   0,  0,  0
         pf16c     1,   4,  4,  4
         pf16c     1,   0,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     1,   0,  0,  0
         endbab
-PM_Pat_Flash:
-        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Flashy
 
-BAPM_Frs_Alternate:
+PM_Pat_Alternate:
+        pattern PATDF_16C, DEF_RL, 3, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf16c     1,   1,  1,  1
         pf16c     1,   4,  4,  4
         endbab
-PM_Pat_Alternate:
-        pattern PATDF_16C, DEF_RL, 3, PATSF_BAPM_PMF, 2
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Alternate
 
-BAPM_Frs_RimWeightedFlash:
+PM_Pat_JammyBattenberg:
+        pattern PATDF_16C, DEF_RL, 12, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  7,  4
+        pf16c     1,   4,  7,  1
+        endbab
+
+PM_Pat_RimWtdPacked1:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 1
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RimWtdPacked
+PM_Pat_RimWtdPacked2:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RimWtdPacked
+PM_Pat_RimWtdPacked3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 3
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RimWtdPacked
+PM_Pat_RimWtdSpaced3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RimWtdPacked
+BAPM_Frs_RimWtdPacked:
+        bablock
+        pf16c     1,   3,  2,  1
+        pf16c     1,   6,  5,  4
+        pf16c     1,   9,  8,  7
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_HubWtdPacked1:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 1
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_HubWtdPacked
+PM_Pat_HubWtdPacked2:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_HubWtdPacked
+PM_Pat_HubWtdPacked3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 3
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_HubWtdPacked
+PM_Pat_HubWtdSpaced3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_HubWtdPacked
+BAPM_Frs_HubWtdPacked:
+        bablock
+        pf16c     1,   1,  2,  3
+        pf16c     1,   4,  5,  6
+        pf16c     1,   7,  8,  9
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_RimWtdFlash1:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RimWtdFlash
+PM_Pat_RimWtdFlash2:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RimWtdFlash
+PM_Pat_RimWtdFlash3:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RimWtdFlash
+BAPM_Frs_RimWtdFlash:
         bablock
         pf16c     1,   3,  2,  1
         pf16c     1,   0,  0,  0
         pf16c     1,   6,  5,  4
         pf16c     1,   0,  0,  0
+        pf16c     1,   9,  8,  7
+        pf16c     1,   0,  0,  0
         endbab
-PM_Pat_RimWeightedSolid:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 1
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RimWeightedFlash
-PM_Pat_RimWeightedFlash:
-        pattern PATDF_16C, 7, 4, PATSF_BAPM_PMF, 4
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RimWeightedFlash
 
+PM_Pat_HubWtdFlash1:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_HubWtdFlash
+PM_Pat_HubWtdFlash2:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_HubWtdFlash
+PM_Pat_HubWtdFlash3:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_HubWtdFlash
+BAPM_Frs_HubWtdFlash:
+        bablock
+        pf16c     1,   1,  2,  3
+        pf16c     1,   0,  0,  0
+        pf16c     1,   4,  5,  6
+        pf16c     1,   0,  0,  0
+        pf16c     1,   7,  8,  9
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_SoftFlash2:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 12
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_SoftFlash
+PM_Pat_SoftFlash3:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 18
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_SoftFlash
 BAPM_Frs_SoftFlash:
         bablock
         pf16c     1,   3,  3,  3
@@ -6136,11 +6649,92 @@ BAPM_Frs_SoftFlash:
         pf16c     1,   5,  5,  5
         pf16c     1,   6,  6,  6
         pf16c     1,   0,  0,  0
+        pf16c     1,   9,  9,  9
+        pf16c     1,   8,  8,  8
+        pf16c     1,   7,  7,  7
+        pf16c     1,   8,  8,  8
+        pf16c     1,   9,  9,  9
+        pf16c     1,   0,  0,  0
         endbab
-PM_Pat_SoftFlash:
-        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 12
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_SoftFlash
 
+PM_Pat_SoftFlash2X:
+        pattern PATDF_16C, 14, 2, PATSF_BAPM_PMF, 12
+        dw BAPM_Pal_Basic, BAPM_Map_Medley5X_UXXX, BAPM_Frs_SoftFlashX
+PM_Pat_SoftFlash3X:
+        pattern PATDF_16C, 14, 2, PATSF_BAPM_PMF, 18
+        dw BAPM_Pal_Basic, BAPM_Map_Medley5X_UXXX, BAPM_Frs_SoftFlashX
+BAPM_Frs_SoftFlashX:
+        bablock
+        pf16c     1,   3,  3,  3
+        pf16c     1,   2,  2,  2
+        pf16c     1,  13, 13, 13
+        pf16c     1,   2,  2,  2
+        pf16c     1,   3,  3,  3
+        pf16c     1,   0,  0,  0
+        pf16c     1,   6,  6,  6
+        pf16c     1,   5,  5,  5
+        pf16c     1,  13, 13, 13
+        pf16c     1,   5,  5,  5
+        pf16c     1,   6,  6,  6
+        pf16c     1,   0,  0,  0
+        pf16c     1,   9,  9,  9
+        pf16c     1,   8,  8,  8
+        pf16c     1,  13, 13, 13
+        pf16c     1,   8,  8,  8
+        pf16c     1,   9,  9,  9
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_RampUp2:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RampUp
+PM_Pat_RampUp3:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 12
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RampUp
+BAPM_Frs_RampUp:
+        bablock
+        pf16c     1,   3,  3,  3
+        pf16c     1,   2,  2,  2
+        pf16c     1,   1,  1,  1
+        pf16c     1,   0,  0,  0
+        pf16c     1,   6,  6,  6
+        pf16c     1,   5,  5,  5
+        pf16c     1,   4,  4,  4
+        pf16c     1,   0,  0,  0
+        pf16c     1,   9,  9,  9
+        pf16c     1,   8,  8,  8
+        pf16c     1,   7,  7,  7
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_RampDown2:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RampDown
+PM_Pat_RampDown3:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 12
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_RampDown
+BAPM_Frs_RampDown:
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     1,   2,  2,  2
+        pf16c     1,   3,  3,  3
+        pf16c     1,   0,  0,  0
+        pf16c     1,   4,  4,  4
+        pf16c     1,   5,  5,  5
+        pf16c     1,   6,  6,  6
+        pf16c     1,   0,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     1,   8,  8,  8
+        pf16c     1,   9,  9,  9
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_Dogs:
+        pattern PATDF_16C, 14, 4, PATSF_BAPM_PMF, 5 * 2
+        dw BAPM_Pal_Basic, BAPM_Map_Medley7_UXXX, BAPM_Frs_Dogs
+PM_Pat_DogMedley:
+        pattern PATDF_16C, 14, 4, PATSF_BAPM_PMF, 5 * 6
+        dw BAPM_Pal_Basic, BAPM_Map_Medley7_UXXX, BAPM_Frs_Dogs
 BAPM_Frs_Dogs:
         bablock
         pf16c     1,   1,  0,  0
@@ -6153,12 +6747,31 @@ BAPM_Frs_Dogs:
         pf16c     1,   4,  4,  4
         pf16c     1,   0,  4,  4
         pf16c     1,   0,  0,  4
+        pf16c     1,   7,  0,  0
+        pf16c     1,   7,  7,  0
+        pf16c     1,   7,  7,  7
+        pf16c     1,   7,  7,  0
+        pf16c     1,   7,  0,  0
+        pf16c     1,   0,  0, 10
+        pf16c     1,   0, 10, 10
+        pf16c     1,  10, 10, 10
+        pf16c     1,   0, 10, 10
+        pf16c     1,   0,  0, 10
+        pf16c     1,  11,  0,  0
+        pf16c     1,  11, 11,  0
+        pf16c     1,  11, 11, 11
+        pf16c     1,  11, 11,  0
+        pf16c     1,  11,  0,  0
+        pf16c     1,   0,  0, 12
+        pf16c     1,   0, 12, 12
+        pf16c     1,  12, 12, 12
+        pf16c     1,   0, 12, 12
+        pf16c     1,   0,  0, 12
         endbab
-PM_Pat_Dogs:
-        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 10
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Dogs
 
-BAPM_Frs_SoftDogs:
+PM_Pat_SoftDogs:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 10
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf16c     1,   3,  6,  5
         pf16c     1,   2,  3,  6
@@ -6171,10 +6784,62 @@ BAPM_Frs_SoftDogs:
         pf16c     1,   5,  4,  4
         pf16c     1,   6,  5,  4
         endbab
-PM_Pat_SoftDogs:
-        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 10
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_SoftDogs
 
+PM_Pat_SoftDogMedley:
+        pattern PATDF_256C, 19, 4, PATSF_BAPM_PMF, 30
+        dw BAPM_Pal_Basic, BAPM_Map_SoftDogMedley, 0
+        bablock
+        pf256c    1,   3, 18, 17
+        pf256c    1,   2,  3, 18
+        pf256c    1,   1,  2,  3
+        pf256c    1,   1,  1,  2
+        pf256c    1,   1,  2,  3
+        pf256c    1,   2,  3,  6
+        pf256c    1,   3,  6,  5
+        pf256c    1,   6,  5,  4
+        pf256c    1,   5,  4,  4
+        pf256c    1,   6,  5,  4
+        pf256c    1,   9,  6,  5
+        pf256c    1,   8,  9,  6
+        pf256c    1,   7,  8,  9
+        pf256c    1,   7,  7,  8
+        pf256c    1,   7,  8,  9
+        pf256c    1,   8,  9, 12
+        pf256c    1,   9, 12, 11
+        pf256c    1,  12, 11, 10
+        pf256c    1,  11, 10, 10
+        pf256c    1,  12, 11, 10
+        pf256c    1,  15, 12, 11
+        pf256c    1,  14, 15, 12
+        pf256c    1,  13, 14, 15
+        pf256c    1,  13, 13, 14
+        pf256c    1,  13, 14, 15
+        pf256c    1,  14, 15, 18
+        pf256c    1,  15, 18, 17
+        pf256c    1,  18, 17, 16
+        pf256c    1,  17, 16, 16
+        pf256c    1,  18, 17, 16
+        endbab
+BAPM_Map_SoftDogMedley:
+        bablock
+        dba1b   BLK
+        dba3b   GRN,  GRN1, GRN2
+        dba3b   CER,  CER1, CER2
+        dba3b   YEL,  YEL1, YEL2
+        dba3b   SKY,  SKY1, SKY2
+        dba3b   RED,  RED1, RED2
+        dba3b   SGR,  SGR1, SGR2
+        endbab
+
+PM_Pat_Squares_Fixed5:
+        pattern PATDF_16C, 14, 4, PATSF_BAPM_PMF, 4 * 5
+        dw BAPM_Pal_Basic, BAPM_Map_Medley5X_UXXX, BAPM_Frs_Squares
+PM_Pat_Squares_User2:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4 * 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Squares
+PM_Pat_Squares_User3:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4 * 3
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Squares
 BAPM_Frs_Squares:
         bablock
         pf16c     1,   1,  1,  1
@@ -6185,30 +6850,30 @@ BAPM_Frs_Squares:
         pf16c     2,   4,  0,  4
         pf16c     1,   4,  4,  4
         pf16c     2,   0,  0,  0
-        pf16c     1,   3,  3,  3
-        pf16c     2,   3,  0,  3
-        pf16c     1,   3,  3,  3
+        pf16c     1,   7,  7,  7
+        pf16c     2,   7,  0,  7
+        pf16c     1,   7,  7,  7
         pf16c     2,   0,  0,  0
-        pf16c     1,   2,  2,  2
-        pf16c     2,   2,  0,  2
-        pf16c     1,   2,  2,  2
+        pf16c     1,  10, 10, 10
+        pf16c     2,  10,  0, 10
+        pf16c     1,  10, 10, 10
         pf16c     2,   0,  0,  0
-        pf16c     1,   5,  5,  5
-        pf16c     2,   5,  0,  5
-        pf16c     1,   5,  5,  5
+        pf16c     1,  11, 11, 11
+        pf16c     2,  11,  0, 11
+        pf16c     1,  11, 11, 11
         pf16c     2,   0,  0,  0
-        ;pf16c     1,   6,  6,  6
-        ;pf16c     2,   6,  0,  6
-        ;pf16c     1,   6,  6,  6
+        ;pf16c     1,  12, 12, 12
+        ;pf16c     2,  12,  0, 12
+        ;pf16c     1,  12, 12, 12
         ;pf16c     2,   0,  0,  0
         endbab
-PM_Pat_Squares_Fixed5:
-        pattern PATDF_16C, 11, 4, PATSF_BAPM_PMF, 4 * 5
-        dw BAPM_Pal_Basic, BAPM_Map_SixSolidColoursPlusKW, BAPM_Frs_Squares
-PM_Pat_Squares_User2:
-        pattern PATDF_16C, 11, 4, PATSF_BAPM_PMF, 4 * 2
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Squares
 
+PM_Pat_QuantumSlalom_Fixed6:
+        pattern PATDF_16C, 14, 2, PATSF_BAPM_PMF, 4 * 6
+        dw BAPM_Pal_Basic, BAPM_Map_Medley6_UXXW, BAPM_Frs_QuantumSlalom
+PM_Pat_QuantumSlalom_User2:
+        pattern PATDF_16C, 14, 2, PATSF_BAPM_PMF, 4 * 2
+        dw BAPM_Pal_Basic, BAPM_Map_Medley6_UXXW, BAPM_Frs_QuantumSlalom
 BAPM_Frs_QuantumSlalom:
         bablock
         pf16c     1,   7,  7,  7
@@ -6217,62 +6882,135 @@ BAPM_Frs_QuantumSlalom:
         pf16c     2,   7,  0,  0
         pf16c     1,   7,  7,  7
         pf16c     2,   0,  0,  7
-        pf16c     2,   5,  0,  7
+        pf16c     2,   4,  0,  7
         pf16c     2,   0,  0,  7
         pf16c     1,   7,  7,  7
         pf16c     2,   7,  0,  0
-        pf16c     2,   7,  0,  2
+        pf16c     2,   7,  0, 10
         pf16c     2,   7,  0,  0
         pf16c     1,   7,  7,  7
         pf16c     2,   0,  0,  7
-        pf16c     2,   3,  0,  7
+        pf16c     2,  11,  0,  7
         pf16c     2,   0,  0,  7
         pf16c     1,   7,  7,  7
         pf16c     2,   7,  0,  0
-        pf16c     2,   7,  0,  4
+        pf16c     2,   7,  0, 12
         pf16c     2,   7,  0,  0
         pf16c     1,   7,  7,  7
         pf16c     2,   0,  0,  7
-        pf16c     2,   6,  0,  7
+        pf16c     2,  13,  0,  7
         pf16c     2,   0,  0,  7
         endbab
-PM_Pat_QuantumSlalom_Fixed6:
-        pattern PATDF_16C, 11, 2, PATSF_BAPM_PMF, 4 * 6
-        dw BAPM_Pal_Basic
-        dw BAPM_Map_SixSolidColoursPlusKW
-        dw BAPM_Frs_QuantumSlalom
-PM_Pat_QuantumSlalom_User2:
-        pattern PATDF_16C, 11, 2, PATSF_BAPM_PMF, 4 * 2
-        dw BAPM_Pal_Basic
-        dw BAPM_Map_SixSolidColoursPlusKW
-        dw BAPM_Frs_QuantumSlalom
 
+PM_Pat_Terminals_U2F4:
+        pattern PATDF_16C, 14, 2, PATSF_BAPM_PMF, 24
+        dw BAPM_Pal_Basic, BAPM_Map_Medley6_UXXW, BAPM_Frs_Terminals
+PM_Pat_Terminals_User2:
+        pattern PATDF_16C, 14, 2, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Map_Medley6_UXXW, BAPM_Frs_Terminals
 BAPM_Frs_Terminals:
         bablock
-        pf16c     2,   0,  0,  1
-        pf16c     3,   0,  0,  0
-        pf16c     2,   5,  0,  0
-        pf16c     3,   0,  0,  0
-        pf16c     2,   0,  0,  2
-        pf16c     3,   0,  0,  0
-        pf16c     2,   3,  0,  0
-        pf16c     3,   0,  0,  0
-        pf16c     2,   0,  0,  4
-        pf16c     3,   0,  0,  0
-        pf16c     2,   6,  0,  0
-        pf16c     3,   0,  0,  0
+        pf16c     2,   0,  9,  1
+        pf16c     1,   0,  9,  0
+        pf16c     1,   0,  7,  0
+        pf16c     1,   0,  9,  0
+        pf16c     2,   4,  9,  0
+        pf16c     1,   0,  9,  0
+        pf16c     1,   0,  7,  0
+        pf16c     1,   0,  9,  0
+        pf16c     2,   0,  9, 10
+        pf16c     1,   0,  9,  0
+        pf16c     1,   0,  7,  0
+        pf16c     1,   0,  9,  0
+        pf16c     2,  11,  9,  0
+        pf16c     1,   0,  9,  0
+        pf16c     1,   0,  7,  0
+        pf16c     1,   0,  9,  0
+        pf16c     2,   0,  9, 12
+        pf16c     1,   0,  9,  0
+        pf16c     1,   0,  7,  0
+        pf16c     1,   0,  9,  0
+        pf16c     2,  13,  9,  0
+        pf16c     1,   0,  9,  0
+        pf16c     1,   0,  7,  0
+        pf16c     1,   0,  9,  0
         endbab
-PM_Pat_Terminals_Fixed6:
-        pattern PATDF_16C, 11, 2, PATSF_BAPM_PMF, 2 * 6
-        dw BAPM_Pal_Basic
-        dw BAPM_Map_SixSolidColoursPlusKW
-        dw BAPM_Frs_Terminals
-PM_Pat_Terminals_User2:
-        pattern PATDF_16C, 11, 2, PATSF_BAPM_PMF, 2 * 2
-        dw BAPM_Pal_Basic
-        dw BAPM_Map_SixSolidColoursPlusKW
-        dw BAPM_Frs_Terminals
 
+PM_Pat_TriBounce:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  0,  0
+        pf16c     1,   0,  4,  0
+        pf16c     1,   0,  0,  7
+        pf16c     1,   0,  4,  0
+        endbab
+
+PM_Pat_TriBounceSpaced:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  0,  0
+        pf16c     1,   0,  0,  0
+        pf16c     1,   0,  4,  0
+        pf16c     1,   0,  0,  0
+        pf16c     1,   0,  0,  7
+        pf16c     1,   0,  0,  0
+        pf16c     1,   0,  4,  0
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_Crown:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  0,  0
+        pf16c     1,   4,  4,  0
+        pf16c     1,   7,  7,  7
+        pf16c     1,   4,  4,  0
+        endbab
+
+PM_Pat_Sunburst:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  0,  0
+        pf16c     1,   0,  0,  0
+        pf16c     1,   4,  4,  0
+        pf16c     1,   0,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     1,   0,  0,  0
+        pf16c     1,   4,  4,  0
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_InterdigitationP:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  2,  3
+        pf16c     1,   6,  5,  4
+        endbab
+
+PM_Pat_InterdigitationS:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  2,  3
+        pf16c     1,   0,  0,  0
+        pf16c     1,   6,  5,  4
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_TrianglesNearMe_Fixed5:
+  pattern PATDF_16C, 14, 4, PATSF_BAPM_PMF, 6 * 5
+  dw BAPM_Pal_Basic, BAPM_Map_Medley5X_UXXX, BAPM_Frs_TrianglesNearMe
+PM_Pat_TrianglesNearMe_User2:
+  pattern PATDF_16C, 14, 4, PATSF_BAPM_PMF, 6 * 2
+  dw BAPM_Pal_Basic, BAPM_Map_Medley5X_UXXX, BAPM_Frs_TrianglesNearMe
+PM_Pat_TrianglesNearMe_User3:
+  pattern PATDF_16C, 14, 4, PATSF_BAPM_PMF, 6 * 3
+  dw BAPM_Pal_Basic, BAPM_Map_Medley5X_UXXX, BAPM_Frs_TrianglesNearMe
 BAPM_Frs_TrianglesNearMe:
         bablock
         pf16c     1,   1,  0,  0
@@ -6287,38 +7025,38 @@ BAPM_Frs_TrianglesNearMe:
         pf16c     1,   4,  4,  0
         pf16c     1,   4,  0,  0
         pf16c     1,   0,  0,  0
-        pf16c     1,   3,  0,  0
-        pf16c     1,   3,  3,  0
-        pf16c     1,   3,  3,  3
-        pf16c     1,   3,  3,  0
-        pf16c     1,   3,  0,  0
+        pf16c     1,   7,  0,  0
+        pf16c     1,   7,  7,  0
+        pf16c     1,   7,  7,  7
+        pf16c     1,   7,  7,  0
+        pf16c     1,   7,  0,  0
         pf16c     1,   0,  0,  0
-        pf16c     1,   2,  0,  0
-        pf16c     1,   2,  2,  0
-        pf16c     1,   2,  2,  2
-        pf16c     1,   2,  2,  0
-        pf16c     1,   2,  0,  0
+        pf16c     1,  10,  0,  0
+        pf16c     1,  10, 10,  0
+        pf16c     1,  10, 10, 10
+        pf16c     1,  10, 10,  0
+        pf16c     1,  10,  0,  0
         pf16c     1,   0,  0,  0
-        pf16c     1,   5,  0,  0
-        pf16c     1,   5,  5,  0
-        pf16c     1,   5,  5,  5
-        pf16c     1,   5,  5,  0
-        pf16c     1,   5,  0,  0
+        pf16c     1,  11,  0,  0
+        pf16c     1,  11, 11,  0
+        pf16c     1,  11, 11, 11
+        pf16c     1,  11, 11,  0
+        pf16c     1,  11,  0,  0
         pf16c     1,   0,  0,  0
-        ;pf16c     1,   6,  0,  0
-        ;pf16c     1,   6,  6,  0
-        ;pf16c     1,   6,  6,  6
-        ;pf16c     1,   6,  6,  0
-        ;pf16c     1,   6,  0,  0
+        ;pf16c     1,  12,  0,  0
+        ;pf16c     1,  12, 12,  0
+        ;pf16c     1,  12, 12, 12
+        ;pf16c     1,  12, 12,  0
+        ;pf16c     1,  12,  0,  0
         ;pf16c     1,   0,  0,  0
         endbab
-PM_Pat_TrianglesNearMe_Fixed5:
-  pattern PATDF_16C, 11, 4, PATSF_BAPM_PMF, 6 * 5
-  dw BAPM_Pal_Basic, BAPM_Map_SixSolidColoursPlusKW, BAPM_Frs_TrianglesNearMe
-PM_Pat_TrianglesNearMe_User2:
-  pattern PATDF_16C, 11, 4, PATSF_BAPM_PMF, 6 * 2
-  dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_TrianglesNearMe
 
+PM_Pat_ZigZag:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_ZigZagVs
+PM_Pat_ConsummateVs:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 10
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_ZigZagVs
 BAPM_Frs_ZigZagVs:
         bablock
         pf16c     1,   1,  0,  0
@@ -6332,34 +7070,32 @@ BAPM_Frs_ZigZagVs:
         pf16c     1,   0,  4,  0
         pf16c     1,   0,  0,  4
         endbab
-PM_Pat_ZigZag:
-        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_ZigZagVs
-PM_Pat_ConsummateVs:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 10
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_ZigZagVs
 
-BAPM_Frs_Step:
+PM_Pat_Step:
+        pattern PATDF_4C, 4, 3, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf4c      3,   1,  0,  0
         pf4c      1,   1,  1,  1
         pf4c      3,   0,  0,  1
         pf4c      1,   1,  1,  1
         endbab
-PM_Pat_Step:
-        pattern PATDF_4C, 4, 3, PATSF_BAPM_PMF, 4
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Step
 
-BAPM_Frs_Spokes:
+PM_Pat_Spokes:
+        pattern PATDF_4C, 4, 4, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf4c      1,   1,  1,  1
         pf4c      1,   1,  0,  0
         endbab
-PM_Pat_Spokes:
-        pattern PATDF_4C, 4, 4, PATSF_BAPM_PMF, 2
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Spokes
 
-BAPM_Frs_Spokes2:
+PM_Pat_Spokes2:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Spokes2or3
+PM_Pat_Spokes3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 9
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Spokes2or3
+BAPM_Frs_Spokes2or3:
         bablock
         pf16c     1,   2,  0,  0
         pf16c     2,   1,  1,  1
@@ -6367,11 +7103,307 @@ BAPM_Frs_Spokes2:
         pf16c     1,   5,  0,  0
         pf16c     2,   4,  4,  4
         pf16c     1,   5,  0,  0
+        pf16c     1,   8,  0,  0
+        pf16c     2,   7,  7,  7
+        pf16c     1,   8,  0,  0
         endbab
-PM_Pat_Spokes2:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 6
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Spokes2
 
+PM_Pat_SpotsBars:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     1,   0,  0,  0
+        pf16c     1,   0,  7,  0
+        pf16c     1,   0,  0,  0
+        pf16c     1,   4,  4,  4
+        pf16c     1,   0,  0,  0
+        pf16c     1,   0,  7,  0
+        pf16c     1,   0,  0,  0
+        endbab
+
+PM_Pat_RadCon:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     2,   0,  0,  0
+        pf16c     1,   1,  1,  1
+        pf16c     2,   0,  0,  0
+        pf16c     1,   1,  1,  1
+        pf16c     2,   0,  0,  0
+        pf16c     5,   4,  0,  4
+        pf16c     2,   0,  0,  0
+        endbab
+
+PM_Pat_Twist:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 12
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     3,   1,  0,  4
+        pf16c     1,   1,  0,  5
+        pf16c     1,   2,  3,  6
+        pf16c     1,   0,  1,  0
+        pf16c     1,   6,  3,  2
+        pf16c     1,   5,  0,  1
+        pf16c     3,   4,  0,  1
+        pf16c     1,   4,  0,  2
+        pf16c     1,   5,  6,  3
+        pf16c     1,   0,  4,  0
+        pf16c     1,   3,  6,  5
+        pf16c     1,   2,  0,  4
+        endbab
+
+PM_Pat_PiedCatNoses:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 16
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     2,   1,  0,  0
+        pf16c     1,   1,  0,  6
+        pf16c     2,   2,  0,  5
+        pf16c     1,   3,  0,  4
+        pf16c     1,   0,  0,  4
+        pf16c     1,   4,  4,  4
+        pf16c     2,   0,  0,  0
+        pf16c     1,   1,  1,  1
+        pf16c     1,   0,  0,  1
+        pf16c     1,   6,  0,  1
+        pf16c     2,   5,  0,  2
+        pf16c     1,   4,  0,  3
+        pf16c     1,   4,  0,  0
+        pf16c     1,   4,  4,  4
+        pf16c     2,   0,  0,  0
+        endbab
+
+PM_Pat_PolarCatNoses:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 18
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     2,   1,  0,  0
+        pf16c     1,   1,  0,  6
+        pf16c     1,   2,  0,  5
+        pf16c     1,   2,  0,  5
+        pf16c     1,   3,  0,  4
+        pf16c     1,   0,  0,  4
+        pf16c     1,   4,  4,  4
+        pf16c     2,   0,  0,  0
+        pf16c     1,   4,  4,  4
+        pf16c     1,   0,  0,  4
+        pf16c     1,   3,  0,  4
+        pf16c     1,   2,  0,  5
+        pf16c     1,   2,  0,  5
+        pf16c     1,   1,  0,  6
+        pf16c     1,   1,  0,  0
+        pf16c     1,   1,  1,  1
+        pf16c     2,   0,  0,  0
+        endbab
+
+PM_Pat_Chain:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 12
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     2,   1,  1,  1
+        pf16c     1,   1,  0,  1
+        pf16c     1,   1,  6,  1
+        pf16c     1,   2,  5,  2
+        pf16c     1,   3,  5,  3
+        pf16c     1,   0,  4,  0
+        pf16c     1,   0,  4,  0
+        pf16c     1,   0,  4,  0
+        pf16c     1,   3,  5,  3
+        pf16c     1,   2,  5,  2
+        pf16c     1,   1,  6,  1
+        pf16c     1,   1,  0,  1
+        endbab
+
+PM_Pat_Barberpole2:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  4
+        pf16c     1,   4,  1,  1
+        pf16c     1,   4,  4,  1
+        pf16c     1,   1,  4,  4
+        endbab
+
+PM_Pat_Barberpole3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  7
+        pf16c     1,   4,  1,  1
+        pf16c     1,   4,  4,  1
+        pf16c     1,   7,  4,  4
+        pf16c     1,   7,  7,  4
+        pf16c     1,   1,  7,  7
+        endbab
+
+PM_Pat_Barberpole3S:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  0
+        pf16c     1,   4,  1,  1
+        pf16c     1,   4,  4,  1
+        pf16c     1,   7,  4,  4
+        pf16c     1,   7,  7,  4
+        pf16c     1,   0,  7,  7
+        pf16c     1,   0,  0,  7
+        pf16c     1,   1,  0,  0
+        endbab
+
+PM_Pat_FatBarberpole2:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     1,   4,  1,  1
+        pf16c     1,   4,  4,  1
+        pf16c     1,   4,  4,  4
+        pf16c     1,   1,  4,  4
+        pf16c     1,   1,  1,  4
+        endbab
+
+PM_Pat_FatBarberpole3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 9
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     1,   4,  1,  1
+        pf16c     1,   4,  4,  1
+        pf16c     1,   4,  4,  4
+        pf16c     1,   7,  4,  4
+        pf16c     1,   7,  7,  4
+        pf16c     1,   7,  7,  7
+        pf16c     1,   1,  7,  7
+        pf16c     1,   1,  1,  7
+        endbab
+
+PM_Pat_FatBarberpole3S:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 12
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     1,   4,  1,  1
+        pf16c     1,   4,  4,  1
+        pf16c     1,   4,  4,  4
+        pf16c     1,   7,  4,  4
+        pf16c     1,   7,  7,  4
+        pf16c     1,   7,  7,  7
+        pf16c     1,   0,  7,  7
+        pf16c     1,   0,  0,  7
+        pf16c     1,   0,  0,  0
+        pf16c     1,   1,  0,  0
+        pf16c     1,   1,  1,  0
+        endbab
+
+PM_Pat_SoftBarberpole2:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 18
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  0
+        pf16c     1,   2,  1,  3
+        pf16c     1,   3,  1,  2
+        pf16c     1,   0,  1,  1
+        pf16c     1,   6,  2,  1
+        pf16c     1,   5,  3,  1
+        pf16c     1,   4,  0,  1
+        pf16c     1,   4,  6,  2
+        pf16c     1,   4,  5,  3
+        pf16c     1,   4,  4,  0
+        pf16c     1,   5,  4,  6
+        pf16c     1,   6,  4,  5
+        pf16c     1,   0,  4,  4
+        pf16c     1,   3,  5,  4
+        pf16c     1,   2,  6,  4
+        pf16c     1,   1,  0,  4
+        pf16c     1,   1,  3,  5
+        pf16c     1,   1,  2,  6
+        endbab
+
+PM_Pat_SoftBarberpole3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 27
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  0
+        pf16c     1,   2,  1,  3
+        pf16c     1,   3,  1,  2
+        pf16c     1,   0,  1,  1
+        pf16c     1,   6,  2,  1
+        pf16c     1,   5,  3,  1
+        pf16c     1,   4,  0,  1
+        pf16c     1,   4,  6,  2
+        pf16c     1,   4,  5,  3
+        pf16c     1,   4,  4,  0
+        pf16c     1,   5,  4,  6
+        pf16c     1,   6,  4,  5
+        pf16c     1,   0,  4,  4
+        pf16c     1,   9,  5,  4
+        pf16c     1,   8,  6,  4
+        pf16c     1,   7,  0,  4
+        pf16c     1,   7,  9,  5
+        pf16c     1,   7,  8,  6
+        pf16c     1,   7,  7,  0
+        pf16c     1,   8,  7,  9
+        pf16c     1,   9,  7,  8
+        pf16c     1,   0,  7,  7
+        pf16c     1,   3,  8,  7
+        pf16c     1,   2,  9,  7
+        pf16c     1,   1,  0,  7
+        pf16c     1,   1,  3,  8
+        pf16c     1,   1,  2,  9
+        endbab
+
+PM_Pat_SoftBarberpole3S:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 36
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  0
+        pf16c     1,   2,  1,  3
+        pf16c     1,   3,  1,  2
+        pf16c     1,   0,  1,  1
+        pf16c     1,   6,  2,  1
+        pf16c     1,   5,  3,  1
+        pf16c     1,   4,  0,  1
+        pf16c     1,   4,  6,  2
+        pf16c     1,   4,  5,  3
+        pf16c     1,   4,  4,  0
+        pf16c     1,   5,  4,  6
+        pf16c     1,   6,  4,  5
+        pf16c     1,   0,  4,  4
+        pf16c     1,   9,  5,  4
+        pf16c     1,   8,  6,  4
+        pf16c     1,   7,  0,  4
+        pf16c     1,   7,  9,  5
+        pf16c     1,   7,  8,  6
+        pf16c     1,   7,  7,  0
+        pf16c     1,   8,  7,  9
+        pf16c     1,   9,  7,  8
+        pf16c     1,   0,  7,  7
+        pf16c     1,   0,  8,  7
+        pf16c     1,   0,  9,  7
+        pf16c     1,   0,  0,  7
+        pf16c     1,   0,  0,  8
+        pf16c     1,   0,  0,  9
+        pf16c     1,   0,  0,  0
+        pf16c     1,   0,  0,  0
+        pf16c     1,   0,  0,  0
+        pf16c     1,   0,  0,  0
+        pf16c     1,   3,  0,  0
+        pf16c     1,   2,  0,  0
+        pf16c     1,   1,  0,  0
+        pf16c     1,   1,  3,  0
+        pf16c     1,   1,  2,  0
+        endbab
+
+PM_Pat_WavySpokes2:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 16
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_WavySpokes
+PM_Pat_WavySpokes3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 24
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_WavySpokes
 BAPM_Frs_WavySpokes:
         bablock
         pf16c     1,   0,  3,  0
@@ -6390,11 +7422,22 @@ BAPM_Frs_WavySpokes:
         pf16c     1,   4,  0,  4
         pf16c     1,   6,  0,  6
         pf16c     3,   0,  0,  0
+        pf16c     1,   0,  9,  0
+        pf16c     1,   0,  7,  0
+        pf16c     1,   9,  7,  9
+        pf16c     1,   7,  7,  7
+        pf16c     1,   7,  9,  7
+        pf16c     1,   7,  0,  7
+        pf16c     1,   9,  0,  9
+        pf16c     3,   0,  0,  0
         endbab
-PM_Pat_WavySpokes:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 16
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_WavySpokes
 
+PM_Pat_Chevrons2:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 24
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Chevrons
+PM_Pat_Chevrons3:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 36
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Chevrons
 BAPM_Frs_Chevrons:
         bablock
         pf16c     1,   3,  0,  3
@@ -6421,25 +7464,35 @@ BAPM_Frs_Chevrons:
         pf16c     1,   0,  5,  0
         pf16c     1,   0,  6,  0
         pf16c     6,   0,  0,  0
+        pf16c     1,   9,  0,  9
+        pf16c     1,   8,  0,  8
+        pf16c     1,   7,  0,  7
+        pf16c     1,   7,  9,  7
+        pf16c     1,   7,  8,  7
+        pf16c     1,   7,  7,  7
+        pf16c     1,   8,  7,  8
+        pf16c     1,   9,  7,  9
+        pf16c     1,   0,  7,  0
+        pf16c     1,   0,  8,  0
+        pf16c     1,   0,  9,  0
+        pf16c     6,   0,  0,  0
         endbab
-PM_Pat_Chevrons:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 24
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Chevrons
 
-BAPM_Frs_Weave:
-        bablock
-        pf16c     1,   3,  5,  3
-        pf16c     1,   2,  6,  2
-        pf16c     1,   1,  0,  1
-        pf16c     1,   2,  6,  2
-        pf16c     1,   3,  5,  3
-        pf16c     1,   0,  4,  0
-        endbab
 PM_Pat_Weave:
         pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 6
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Weave
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   3,  5,  9
+        pf16c     1,   2,  6,  8
+        pf16c     1,   1,  0,  7
+        pf16c     1,   2,  6,  8
+        pf16c     1,   3,  5,  9
+        pf16c     1,   0,  4,  0
+        endbab
 
-BAPM_Frs_LumCrawl:
+PM_Pat_LumCrawl:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 32
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf16c     1,   1,  1,  1
         pf16c     1,   0,  0,  0
@@ -6474,36 +7527,14 @@ BAPM_Frs_LumCrawl:
         pf16c     1,   4,  4,  5
         pf16c     1,   0,  0,  0
         endbab
-PM_Pat_LumCrawl:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 32
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_LumCrawl
 
-BAPM_Frs_ChequerK:
-        bablock
-        pf16c     1,   1,  0,  1
-        pf16c     1,   0,  1,  0
-        endbab
-PM_Pat_ChequerK:
-        pattern PATDF_16C, 8, 6, PATSF_BAPM_PMF, 2
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_ChequerK
-
-BAPM_Frs_ChequerW:
-        bablock
-        pf16c     1,   1, 10,  1
-        pf16c     1,  10,  1, 10
-        endbab
-PM_Pat_ChequerW:
-        pattern PATDF_16C, 11, 6, PATSF_BAPM_PMF, 2
-        dw BAPM_Pal_Basic, BAPM_Map_SixSolidColoursPlusKW, BAPM_Frs_ChequerW
-
-BAPM_Frs_Chequer2:
+PM_Pat_Chequer:
+        pattern PATDF_16C, DEF_RL, 3, PATSF_BAPM_PMF, 2
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf16c     1,   1,  4,  1
         pf16c     1,   4,  1,  4
         endbab
-PM_Pat_Chequer2:
-        pattern PATDF_16C, DEF_RL, 3, PATSF_BAPM_PMF, 2
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Chequer2
 
 PM_Pat_ByYourCommand:
         pattern PATDF_24B, 0, 1, PATSF_BAPM_PMF, 6
@@ -6517,20 +7548,13 @@ PM_Pat_ByYourCommand:
         pf24b   111, 1, 0x020000, 0xFE0000, 0x000000
         endbab
 
-PM_Pat_AWL:  ; Aircraft Warning Light
-        pattern PATDF_4C, 4, 1, PATSF_BAPM_PMF, 1
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
-        bablock
-        pf4c      1,   0,  0,  1
-        endbab
+;PM_Pat_AWL:  ; Aircraft Warning Light
+;        pattern PATDF_4C, 4, 1, PATSF_BAPM_PMF, 1
+;        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+;        bablock
+;        pf4c      1,   0,  0,  1
+;        endbab
 
-BAPM_Frs_TriConc:
-        bablock
-        pf16c     1,   1,  4,  7
-        pf16c     1,   0,  0,  0
-        pf16c     1,   1,  4,  7
-        pf16c     1,   1,  4,  7
-        endbab
 PM_Pat_TriC_Solid:
         pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 1
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_TriConc
@@ -6540,7 +7564,20 @@ PM_Pat_TriC_Flash:
 PM_Pat_TriC_Dashes:
         pattern PATDF_16C, DEF_RL, 6, PATSF_BAPM_PMF, 4
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_TriConc
+BAPM_Frs_TriConc:
+        bablock
+        pf16c     1,   1,  4,  7
+        pf16c     1,   0,  0,  0
+        pf16c     1,   1,  4,  7
+        pf16c     1,   1,  4,  7
+        endbab
 
+PM_Pat_TriR_Solid:
+        pattern PATDF_16C, DEF_RL, 8, PATSF_BAPM_PMF, 3
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_TriRad
+PM_Pat_TriR_Spaced:
+        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_TriRad
 BAPM_Frs_TriRad:
         bablock
         pf16c     1,   1,  1,  1
@@ -6548,24 +7585,19 @@ BAPM_Frs_TriRad:
         pf16c     1,   7,  7,  7
         pf16c     1,   0,  0,  0
         endbab
-PM_Pat_TriR_Solid:
-        pattern PATDF_16C, DEF_RL, 8, PATSF_BAPM_PMF, 3
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_TriRad
-PM_Pat_TriR_Spaced:
-        pattern PATDF_16C, DEF_RL, 4, PATSF_BAPM_PMF, 4
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_TriRad
 
-BAPM_Frs_TriChaser:
+PM_Pat_TriChaser:
+        pattern PATDF_16C, DEF_RL, 160, PATSF_BAPM_PMF, 3
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf16c     1,   1,  4,  7
         pf16c     1,   7,  1,  4
         pf16c     1,   4,  7,  1
         endbab
-PM_Pat_TriChaser:
-        pattern PATDF_16C, DEF_RL, 160, PATSF_BAPM_PMF, 3
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_TriChaser
 
-BAPM_Frs_BlurStep:
+PM_Pat_BlurStep:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 12
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf16c     1,   1,  1,  1
         pf16c     1,   2,  2,  1
@@ -6580,49 +7612,85 @@ BAPM_Frs_BlurStep:
         pf16c     1,   5,  0,  0
         pf16c     1,   5,  0,  0
         endbab
-PM_Pat_BlurStep:
+
+PM_Pat_Decay2:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, PM_Frs_Decay
+PM_Pat_Decay3:
         pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 12
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_BlurStep
-
-BAPM_Frs_IntenseDecay:
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, PM_Frs_Decay
+PM_Frs_Decay:
         bablock
-        pf16c     1,  10, 10, 10
         pf16c     1,   1,  1,  1
         pf16c     1,   2,  2,  2
         pf16c     1,   3,  3,  3
-        pf16c     1,   0,  0,  0
-        pf16c     1,   0,  0,  0
-        pf16c     1,  10, 10, 10
+        pf16c     2,   0,  0,  0
         pf16c     1,   4,  4,  4
         pf16c     1,   5,  5,  5
         pf16c     1,   6,  6,  6
-        pf16c     1,   0,  0,  0
-        pf16c     1,   0,  0,  0
-        endbab
-PM_Pat_IntenseDecay:
-        pattern PATDF_16C, 11, 2, PATSF_BAPM_PMF, 12
-        dw BAPM_Pal_Basic
-        dw BAPM_Map_SixSolidColoursPlusKX
-        dw BAPM_Frs_IntenseDecay
-
-BAPM_Frs_Bookends:
-        bablock
-        pf16c     1,   3,  3,  3
-        pf16c     1,   2,  2,  2
-        pf16c     1,   1,  1,  1
-        pf16c     1,   1,  1,  1
-        pf16c     1,   4,  4,  4
+        pf16c     2,   0,  0,  0
         pf16c     1,   7,  7,  7
+        pf16c     1,   8,  8,  8
+        pf16c     1,   9,  9,  9
+        pf16c     2,   0,  0,  0
+        endbab
+
+PM_Pat_Decay2X:
+        pattern PATDF_16C, 14, 2, PATSF_BAPM_PMF, 10
+        dw BAPM_Pal_Basic, BAPM_Map_Medley5X_UXXX, PM_Frs_DecayX
+PM_Pat_Decay3X:
+        pattern PATDF_16C, 14, 2, PATSF_BAPM_PMF, 15
+        dw BAPM_Pal_Basic, BAPM_Map_Medley5X_UXXX, PM_Frs_DecayX
+PM_Frs_DecayX:
+        bablock
+        pf16c     1,  13, 13, 13
+        pf16c     1,   1,  1,  1
+        pf16c     1,   2,  2,  2
+        pf16c     1,   3,  3,  3
+        pf16c     2,   0,  0,  0
+        pf16c     1,  13, 13, 13
+        pf16c     1,   4,  4,  4
         pf16c     1,   5,  5,  5
         pf16c     1,   6,  6,  6
-        pf16c     1,   0,  0,  0
-        pf16c     1,   0,  0,  0
+        pf16c     2,   0,  0,  0
+        pf16c     1,  13, 13, 13
+        pf16c     1,   7,  7,  7
+        pf16c     1,   8,  8,  8
+        pf16c     1,   9,  9,  9
+        pf16c     2,   0,  0,  0
         endbab
-PM_Pat_Bookends:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 10
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Bookends
 
-BAPM_Frs_Slides:
+PM_Pat_Bookends:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   3,  3,  3
+        pf16c     1,   2,  2,  2
+        pf16c     1,   1,  1,  1
+        pf16c     1,   7,  7,  7
+        pf16c     1,   4,  4,  4
+        pf16c     1,   5,  5,  5
+        pf16c     1,   6,  6,  6
+        pf16c     2,   0,  0,  0
+        endbab
+
+PM_Pat_BookendsX:
+        pattern PATDF_16C, 14, 1, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Map_Medley5X_UXXX, 0
+        bablock
+        pf16c     1,   3,  3,  3
+        pf16c     1,   2,  2,  2
+        pf16c     1,   1,  1,  1
+        pf16c     1,  13, 13, 13
+        pf16c     1,   4,  4,  4
+        pf16c     1,   5,  5,  5
+        pf16c     1,   6,  6,  6
+        pf16c     2,   0,  0,  0
+        endbab
+
+PM_Pat_Slides:
+        pattern PATDF_16C, DEF_RL, 16, PATSF_BAPM_PMF, 26
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf16c    16,   1,  1,  1
         pf16c     1,   2,  1,  1
@@ -6651,34 +7719,840 @@ BAPM_Frs_Slides:
         pf16c     1,   3,  1,  1
         pf16c     1,   2,  1,  1
         endbab
-PM_Pat_Slides:
-        pattern PATDF_16C, DEF_RL, 16, PATSF_BAPM_PMF, 26
-        dw BAPM_Pal_Basic, BAPM_Default_Ramps, BAPM_Frs_Slides
 
-INCLUDE_MORSE equ 0
+PM_Pat_WaveOut:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  2,  3
+        pf16c     1,   2,  1,  2
+        pf16c     1,   3,  2,  1
+        pf16c     1,   2,  3,  2
+        endbab
+
+PM_Pat_WaveIn:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   3,  2,  1
+        pf16c     1,   2,  1,  2
+        pf16c     1,   1,  2,  3
+        pf16c     1,   2,  3,  2
+        endbab
+
+PM_Pat_FatWaveOut:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  2,  2
+        pf16c     1,   1,  1,  2
+        pf16c     1,   2,  1,  1
+        pf16c     1,   2,  2,  1
+        pf16c     1,   3,  2,  2
+        pf16c     1,   3,  3,  2
+        pf16c     1,   2,  3,  3
+        pf16c     1,   2,  2,  3
+        endbab
+
+PM_Pat_FatWaveIn:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   2,  2,  1
+        pf16c     1,   2,  1,  1
+        pf16c     1,   1,  1,  2
+        pf16c     1,   1,  2,  2
+        pf16c     1,   2,  2,  3
+        pf16c     1,   2,  3,  3
+        pf16c     1,   3,  3,  2
+        pf16c     1,   3,  2,  2
+        endbab
+
+PM_Pat_AlienCircuitry:
+        pattern PATDF_16C, 16, 1, PATSF_BAPM_PMF, 122
+        dw BAPM_Pal_Basic, 0, BAPM_Frs_AlienCircuitry
+BAPM_Frs_AlienCircuitry:
+        bablock
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   1,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   1,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   7,  7,  7
+        pf16c     2,   7,  0,  0
+        pf16c     1,   7,  0,  4
+        pf16c     2,   7,  0,  0
+        pf16c     4,   7,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  0
+        pf16c     1,   0,  1,  0
+        pf16c     2,   0,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  7,  0
+        pf16c     1,   0,  7,  7
+        pf16c     2,   0,  7,  0
+        pf16c     1,   0,  7,  7
+        pf16c     2,   0,  7,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   7,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   4,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   4,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   1,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   7,  7,  7
+        pf16c     2,   7,  0,  0
+        pf16c     1,   7,  0,  4
+        pf16c     2,   7,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  0
+        pf16c     1,   2,  1,  2
+        pf16c     2,   0,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   4,  0,  7
+        pf16c     5,   0,  0,  7
+        pf16c     1,   4,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   4,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     4,   7,  0,  7
+        pf16c     5,   7,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  7,  0
+        pf16c     1,   7,  7,  0
+        pf16c     2,   0,  7,  0
+        pf16c     1,   7,  7,  0
+        pf16c     2,   0,  0,  0
+        pf16c     1,   0,  7,  7
+        pf16c     2,   0,  7,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  0
+        pf16c     1,   2,  1,  2
+        pf16c     2,   0,  0,  0
+        pf16c     1,   7,  7,  0
+        pf16c     5,   0,  7,  0
+        pf16c     1,   0,  7,  7
+        pf16c     2,   0,  0,  0
+        pf16c     1,   5,  4,  5
+        pf16c     2,   0,  0,  0
+        pf16c     1,   5,  4,  5
+        pf16c     2,   0,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     5,   7,  0,  0
+        pf16c     1,   7,  0,  1
+        pf16c     2,   7,  0,  0
+        pf16c     1,   7,  0,  1
+        pf16c     2,   7,  0,  0
+        pf16c     1,   7,  0,  4
+        pf16c     2,   7,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     5,   0,  7,  0
+        pf16c     1,   7,  7,  7
+        pf16c     1,   7,  0,  7
+        pf16c     1,   0,  0,  0
+        pf16c     1,   0,  1,  0
+        pf16c     1,   0,  0,  0
+        pf16c     1,   7,  0,  7
+        pf16c     1,   7,  7,  7
+        pf16c     5,   0,  7,  0
+        pf16c     1,   0,  7,  7
+        pf16c     2,   0,  0,  0
+        pf16c     1,   0,  7,  7
+        pf16c     2,   0,  7,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   4,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   4,  0,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  0
+        pf16c     1,   1,  0,  4
+        pf16c     2,   0,  0,  0
+        pf16c     1,   1,  0,  4
+        pf16c     2,   0,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     5,   7,  0,  0
+        pf16c     1,   7,  0,  1
+        pf16c     2,   7,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   7,  7,  7
+        pf16c     2,   7,  0,  0
+        pf16c     1,   7,  7,  7
+        pf16c     2,   0,  0,  7
+        pf16c     1,   7,  7,  7
+        pf16c     2,   7,  0,  0
+        endbab
+
+PM_Pat_PulseJet:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 12
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   2,  3,  3
+        pf16c     1,   1,  3,  3
+        pf16c     1,   1,  3,  3
+        pf16c     1,   1,  2,  3
+        pf16c     1,   1,  2,  3
+        pf16c     1,   1,  1,  3
+        pf16c     1,   1,  1,  3
+        pf16c     1,   1,  1,  2
+        pf16c     1,   1,  2,  2
+        pf16c     1,   1,  2,  2
+        pf16c     1,   2,  3,  2
+        pf16c     1,   2,  3,  3
+        endbab
+
+PM_Pat_HubBrazier:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 37
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  2,  3
+        pf16c     1,   1,  1,  3
+        pf16c     1,   1,  2,  2
+        pf16c     1,   2,  3,  0
+        pf16c     2,   1,  2,  3
+        pf16c     1,   2,  2,  3
+        pf16c     1,   2,  3,  3
+        pf16c     1,   1,  3,  3
+        pf16c     1,   1,  3,  0
+        pf16c     2,   1,  2,  0
+        pf16c     1,   2,  2,  3
+        pf16c     1,   3,  2,  3
+        pf16c     1,   2,  3,  0
+        pf16c     1,   1,  3,  0
+        pf16c     1,   2,  2,  3
+        pf16c     1,   3,  3,  0
+        pf16c     1,   2,  3,  0
+        pf16c     1,   1,  3,  3
+        pf16c     1,   1,  2,  3
+        pf16c     1,   1,  1,  3
+        pf16c     1,   1,  1,  2
+        pf16c     1,   2,  2,  1
+        pf16c     1,   1,  3,  2
+        pf16c     1,   1,  2,  2
+        pf16c     1,   1,  1,  2
+        pf16c     1,   1,  2,  2
+        pf16c     1,   1,  2,  3
+        pf16c     1,   2,  2,  3
+        pf16c     1,   2,  3,  3
+        pf16c     1,   3,  3,  0
+        pf16c     1,   1,  3,  0
+        pf16c     1,   1,  2,  3
+        pf16c     1,   1,  1,  3
+        pf16c     1,   2,  3,  2
+        pf16c     1,   3,  0,  2
+        pf16c     1,   2,  0,  0
+        pf16c     1,   1,  3,  0
+        endbab
+
+PM_Pat_RimBrazier:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 37
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   3,  2,  1
+        pf16c     1,   3,  1,  1
+        pf16c     1,   2,  2,  1
+        pf16c     1,   0,  3,  2
+        pf16c     2,   3,  2,  1
+        pf16c     1,   3,  2,  2
+        pf16c     1,   3,  3,  2
+        pf16c     1,   3,  3,  1
+        pf16c     1,   0,  3,  1
+        pf16c     2,   0,  2,  1
+        pf16c     1,   3,  2,  2
+        pf16c     1,   3,  2,  3
+        pf16c     1,   0,  3,  2
+        pf16c     1,   0,  3,  1
+        pf16c     1,   3,  2,  2
+        pf16c     1,   0,  3,  3
+        pf16c     1,   0,  3,  2
+        pf16c     1,   3,  3,  1
+        pf16c     1,   3,  2,  1
+        pf16c     1,   3,  1,  1
+        pf16c     1,   2,  1,  1
+        pf16c     1,   1,  2,  2
+        pf16c     1,   2,  3,  1
+        pf16c     1,   2,  2,  1
+        pf16c     1,   2,  1,  1
+        pf16c     1,   2,  2,  1
+        pf16c     1,   3,  2,  1
+        pf16c     1,   3,  2,  2
+        pf16c     1,   3,  3,  2
+        pf16c     1,   0,  3,  3
+        pf16c     1,   0,  3,  1
+        pf16c     1,   3,  2,  1
+        pf16c     1,   3,  1,  1
+        pf16c     1,   2,  3,  2
+        pf16c     1,   2,  0,  3
+        pf16c     1,   0,  0,  2
+        pf16c     1,   0,  3,  1
+        endbab
+
+PM_Pat_MidBrazier:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 40
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   2,  1,  2
+        pf16c     1,   2,  1,  3
+        pf16c     1,   1,  1,  0
+        pf16c     1,   1,  2,  3
+        pf16c     1,   2,  1,  3
+        pf16c     1,   2,  1,  2
+        pf16c     1,   3,  2,  1
+        pf16c     1,   2,  1,  2
+        pf16c     1,   3,  1,  2
+        pf16c     1,   0,  2,  1
+        pf16c     1,   2,  1,  0
+        pf16c     1,   1,  1,  3
+        pf16c     1,   1,  2,  1
+        pf16c     1,   3,  1,  2
+        pf16c     1,   2,  2,  1
+        pf16c     1,   1,  3,  2
+        pf16c     1,   3,  1,  0
+        pf16c     1,   2,  1,  3
+        pf16c     1,   0,  2,  2
+        pf16c     1,   3,  2,  0
+        pf16c     1,   2,  1,  3
+        pf16c     1,   1,  1,  1
+        pf16c     1,   3,  1,  2
+        pf16c     1,   2,  1,  1
+        pf16c     1,   1,  2,  3
+        pf16c     1,   2,  3,  0
+        pf16c     1,   0,  1,  3
+        pf16c     1,   3,  2,  3
+        pf16c     1,   2,  1,  2
+        pf16c     1,   3,  1,  1
+        pf16c     1,   3,  2,  3
+        pf16c     1,   2,  1,  0
+        pf16c     1,   1,  1,  2
+        pf16c     1,   2,  1,  3
+        pf16c     1,   3,  2,  3
+        pf16c     1,   1,  1,  2
+        pf16c     1,   2,  2,  1
+        pf16c     1,   0,  3,  2
+        pf16c     1,   3,  2,  0
+        pf16c     1,   2,  2,  3
+        endbab
+
+PM_Pat_HQHubBrazier:
+        pattern PATDF_16C, 16, 1, PATSF_BAPM_PMF, 137
+        dw BAPM_Pal_Ramp16_Flame, 0, 0
+        bablock
+        pf16c     1,  11,  7,  6
+        pf16c     1,  11,  8,  7
+        pf16c     1,  12, 10,  5
+        pf16c     1,  13, 11,  4
+        pf16c     1,  13, 12,  4
+        pf16c     1,  14, 12,  5
+        pf16c     1,  14, 11,  7
+        pf16c     1,  14, 10,  9
+        pf16c     1,  13,  8,  9
+        pf16c     1,  12,  7,  8
+        pf16c     1,  10,  6,  5
+        pf16c     1,   7,  5,  3
+        pf16c     1,   7,  5,  1
+        pf16c     1,   8,  6,  1
+        pf16c     1,  12,  9,  2
+        pf16c     1,  15, 11,  4
+        pf16c     2,  15, 12,  5
+        pf16c     1,  14, 11,  6
+        pf16c     1,  11,  9,  6
+        pf16c     1,   9,  8,  5
+        pf16c     1,   8,  7,  5
+        pf16c     1,   8,  6,  4
+        pf16c     1,   7,  4,  3
+        pf16c     1,   7,  3,  2
+        pf16c     1,   8,  3,  3
+        pf16c     1,   9,  3,  4
+        pf16c     1,  10,  3,  6
+        pf16c     1,  11,  3,  6
+        pf16c     1,  11,  3,  5
+        pf16c     1,  12,  3,  3
+        pf16c     2,  12,  4,  0
+        pf16c     1,  12,  5,  0
+        pf16c     1,  13,  6,  0
+        pf16c     1,  13,  7,  1
+        pf16c     1,  13,  8,  3
+        pf16c     1,  13,  8,  4
+        pf16c     1,  13,  9,  5
+        pf16c     1,  13,  8,  6
+        pf16c     1,  12,  8,  7
+        pf16c     1,  10,  8,  7
+        pf16c     1,   7,  7,  8
+        pf16c     1,   4,  7,  8
+        pf16c     1,   3,  6,  7
+        pf16c     1,   4,  6,  6
+        pf16c     1,   6,  6,  4
+        pf16c     1,   8,  5,  2
+        pf16c     1,  10,  5,  0
+        pf16c     1,  11,  5,  0
+        pf16c     2,  12,  6,  0
+        pf16c     1,  11,  6,  0
+        pf16c     1,  11,  7,  2
+        pf16c     1,  11,  8,  4
+        pf16c     1,  10,  8,  6
+        pf16c     1,  10,  9,  7
+        pf16c     1,   9,  9,  6
+        pf16c     1,   7,  8,  3
+        pf16c     1,   6,  8,  0
+        pf16c     1,   6,  7,  0
+        pf16c     1,   7,  7,  0
+        pf16c     1,   9,  7,  0
+        pf16c     1,  11,  6,  2
+        pf16c     1,  12,  6,  3
+        pf16c     1,  12,  5,  4
+        pf16c     1,  12,  4,  4
+        pf16c     2,  12,  3,  5
+        pf16c     1,  13,  4,  6
+        pf16c     1,  14,  7,  7
+        pf16c     1,  15,  9,  7
+        pf16c     1,  15, 12,  7
+        pf16c     1,  15, 13,  6
+        pf16c     1,  14, 14,  5
+        pf16c     1,  12, 15,  3
+        pf16c     1,  11, 15,  2
+        pf16c     1,  11, 15,  3
+        pf16c     1,  12, 15,  5
+        pf16c     1,  12, 15,  7
+        pf16c     1,  12, 14,  9
+        pf16c     1,  11, 14, 11
+        pf16c     1,   9, 13, 12
+        pf16c     1,   8, 12, 12
+        pf16c     1,   7, 11, 12
+        pf16c     1,   9, 10, 11
+        pf16c     1,  12,  8, 10
+        pf16c     1,  14,  7,  8
+        pf16c     2,  15,  6,  6
+        pf16c     1,  15,  7,  6
+        pf16c     1,  13,  8,  6
+        pf16c     1,  12,  9,  6
+        pf16c     1,  12, 10,  7
+        pf16c     1,  12, 12,  9
+        pf16c     4,  12, 13, 10
+        pf16c     1,  13, 12,  9
+        pf16c     1,  13, 11,  8
+        pf16c     1,  12, 11,  6
+        pf16c     1,  12, 11,  5
+        pf16c     1,  11, 12,  4
+        pf16c     1,  11, 12,  3
+        pf16c     1,  11, 12,  4
+        pf16c     1,  11, 12,  5
+        pf16c     1,  11, 12,  7
+        pf16c     1,  11, 11,  8
+        pf16c     1,  10,  9,  7
+        pf16c     1,   9,  6,  6
+        pf16c     1,   7,  4,  4
+        pf16c     1,   6,  2,  3
+        pf16c     1,   6,  2,  2
+        pf16c     1,   6,  4,  2
+        pf16c     1,   7,  5,  2
+        pf16c     1,   7,  6,  2
+        pf16c     1,   9,  6,  2
+        pf16c     1,  11,  6,  2
+        pf16c     1,  13,  6,  2
+        pf16c     2,  14,  6,  3
+        pf16c     1,  14,  7,  4
+        pf16c     1,  13,  7,  5
+        pf16c     1,  12,  8,  6
+        pf16c     1,  12, 11,  6
+        pf16c     1,  11, 13,  6
+        pf16c     2,  11, 15,  5
+        pf16c     1,  10, 14,  6
+        pf16c     1,   9, 11,  7
+        pf16c     1,   9,  7,  7
+        pf16c     1,   8,  4,  8
+        pf16c     1,   7,  3,  8
+        pf16c     1,   6,  3,  8
+        pf16c     2,   5,  3,  7
+        pf16c     1,   5,  3,  5
+        pf16c     1,   6,  3,  4
+        pf16c     1,   7,  2,  2
+        pf16c     1,   8,  3,  0
+        pf16c     1,   9,  3,  0
+        pf16c     1,  11,  4,  0
+        pf16c     1,  12,  4,  0
+        pf16c     1,  13,  5,  0
+        pf16c     1,  13,  6,  0
+        pf16c     1,  12,  6,  2
+        pf16c     1,  11,  6,  5
+        endbab
+
+PM_Pat_HQRimBrazier:
+        pattern PATDF_16C, 16, 1, PATSF_BAPM_PMF, 140
+        dw BAPM_Pal_Ramp16_Flame, 0, 0
+        bablock
+        pf16c     1,   2,  7, 15
+        pf16c     1,   3,  8, 15
+        pf16c     1,   3, 10, 14
+        pf16c     1,   4, 11, 13
+        pf16c     1,   5, 12, 12
+        pf16c     1,   6, 12, 12
+        pf16c     1,   8, 11, 13
+        pf16c     1,   9, 10, 14
+        pf16c     1,   9,  8, 13
+        pf16c     1,   7,  7, 13
+        pf16c     1,   3,  6, 12
+        pf16c     2,   0,  5, 10
+        pf16c     1,   0,  6, 10
+        pf16c     1,   2,  9, 12
+        pf16c     1,   5, 11, 13
+        pf16c     1,   7, 12, 13
+        pf16c     1,   8, 12, 13
+        pf16c     1,   7, 11, 12
+        pf16c     1,   6,  9, 11
+        pf16c     1,   5,  8, 10
+        pf16c     1,   4,  7,  9
+        pf16c     1,   4,  6,  8
+        pf16c     1,   3,  4,  7
+        pf16c     1,   3,  3,  6
+        pf16c     1,   3,  3,  8
+        pf16c     1,   2,  3, 11
+        pf16c     1,   2,  3, 13
+        pf16c     1,   2,  3, 15
+        pf16c     1,   1,  3, 15
+        pf16c     1,   0,  3, 14
+        pf16c     1,   0,  4, 13
+        pf16c     1,   0,  4, 12
+        pf16c     1,   0,  5, 13
+        pf16c     1,   0,  6, 14
+        pf16c     1,   0,  7, 15
+        pf16c     1,   0,  8, 15
+        pf16c     1,   2,  8, 15
+        pf16c     1,   4,  9, 14
+        pf16c     1,   6,  8, 13
+        pf16c     1,   7,  8, 11
+        pf16c     1,   7,  8, 10
+        pf16c     1,   6,  7,  9
+        pf16c     1,   4,  7,  8
+        pf16c     1,   3,  6,  7
+        pf16c     1,   2,  6,  7
+        pf16c     1,   2,  6,  8
+        pf16c     1,   2,  5,  8
+        pf16c     1,   2,  5,  9
+        pf16c     1,   1,  5, 10
+        pf16c     1,   0,  6, 11
+        pf16c     1,   0,  6, 12
+        pf16c     1,   0,  6, 13
+        pf16c     1,   0,  7, 13
+        pf16c     1,   2,  8, 13
+        pf16c     1,   4,  8, 12
+        pf16c     1,   5,  9, 11
+        pf16c     1,   5,  9,  9
+        pf16c     1,   4,  8,  6
+        pf16c     1,   2,  8,  4
+        pf16c     1,   1,  7,  3
+        pf16c     1,   1,  7,  4
+        pf16c     1,   2,  7,  7
+        pf16c     1,   3,  6, 10
+        pf16c     1,   3,  6, 12
+        pf16c     1,   3,  5, 13
+        pf16c     1,   3,  4, 13
+        pf16c     1,   3,  3, 13
+        pf16c     1,   3,  3, 14
+        pf16c     1,   4,  4, 15
+        pf16c     1,   5,  7, 15
+        pf16c     1,   7,  9, 15
+        pf16c     1,   7, 12, 15
+        pf16c     1,   6, 13, 15
+        pf16c     1,   5, 14, 14
+        pf16c     1,   3, 15, 12
+        pf16c     1,   2, 15, 11
+        pf16c     1,   3, 15, 11
+        pf16c     1,   4, 15, 12
+        pf16c     1,   6, 15, 13
+        pf16c     1,   7, 14, 13
+        pf16c     1,   9, 14, 13
+        pf16c     1,  10, 13, 11
+        pf16c     1,  11, 12,  9
+        pf16c     1,  11, 11,  8
+        pf16c     1,  12, 10,  8
+        pf16c     1,  12,  8,  9
+        pf16c     1,  12,  7, 10
+        pf16c     2,  11,  6, 11
+        pf16c     1,  10,  7, 11
+        pf16c     1,   8,  8, 11
+        pf16c     1,   7,  9, 11
+        pf16c     1,   7, 10, 12
+        pf16c     1,   7, 12, 13
+        pf16c     2,   7, 13, 14
+        pf16c     2,   8, 13, 14
+        pf16c     1,   9, 12, 13
+        pf16c     1,   8, 11, 12
+        pf16c     1,   7, 11, 12
+        pf16c     1,   5, 11, 12
+        pf16c     1,   3, 12, 12
+        pf16c     2,   2, 12, 12
+        pf16c     1,   4, 12, 12
+        pf16c     1,   6, 12, 12
+        pf16c     1,   6, 11, 12
+        pf16c     1,   6,  9, 11
+        pf16c     1,   4,  6, 10
+        pf16c     1,   3,  4,  9
+        pf16c     2,   2,  2,  7
+        pf16c     1,   2,  4,  6
+        pf16c     1,   3,  5,  6
+        pf16c     1,   3,  6,  6
+        pf16c     1,   3,  6,  8
+        pf16c     1,   2,  6, 11
+        pf16c     1,   1,  6, 14
+        pf16c     2,   1,  6, 15
+        pf16c     1,   2,  7, 15
+        pf16c     1,   3,  7, 15
+        pf16c     1,   3,  8, 14
+        pf16c     1,   3, 11, 14
+        pf16c     1,   2, 13, 15
+        pf16c     1,   2, 15, 15
+        pf16c     1,   2, 15, 14
+        pf16c     1,   3, 14, 13
+        pf16c     1,   5, 11, 11
+        pf16c     1,   6,  7, 10
+        pf16c     1,   8,  4,  8
+        pf16c     1,   9,  3,  6
+        pf16c     1,  10,  3,  4
+        pf16c     1,  10,  3,  3
+        pf16c     1,   9,  3,  2
+        pf16c     1,   7,  3,  3
+        pf16c     1,   4,  3,  5
+        pf16c     1,   1,  2,  7
+        pf16c     1,   0,  3,  9
+        pf16c     1,   0,  3, 10
+        pf16c     2,   0,  4, 10
+        pf16c     1,   0,  5, 11
+        pf16c     1,   1,  6, 12
+        pf16c     1,   1,  6, 13
+        pf16c     1,   2,  6, 14
+        endbab
+
+PM_Pat_HQMidBrazier:
+        pattern PATDF_16C, 16, 1, PATSF_BAPM_PMF, 154
+        dw BAPM_Pal_Ramp16_Flame, 0, 0
+        bablock
+        pf16c     1,   7, 11, 11
+        pf16c     1,   7, 11, 10
+        pf16c     1,   7, 12,  8
+        pf16c     1,   8, 12,  6
+        pf16c     1,   9, 12,  4
+        pf16c     1,  10, 12,  2
+        pf16c     1,  12, 13,  1
+        pf16c     1,  13, 13,  1
+        pf16c     1,  13, 13,  0
+        pf16c     1,  13, 12,  1
+        pf16c     1,  13, 11,  3
+        pf16c     1,  12, 10,  4
+        pf16c     1,  11,  9,  5
+        pf16c     1,  11, 11,  6
+        pf16c     1,  12, 13,  5
+        pf16c     2,  12, 15,  5
+        pf16c     1,  12, 15,  6
+        pf16c     1,  11, 15,  7
+        pf16c     1,  10, 14,  9
+        pf16c     1,   9, 12, 10
+        pf16c     1,   8, 11, 11
+        pf16c     1,   6, 10, 11
+        pf16c     1,   4,  8, 11
+        pf16c     2,   3,  8, 11
+        pf16c     1,   4, 10, 11
+        pf16c     1,   6, 11, 11
+        pf16c     1,   6, 12, 10
+        pf16c     1,   6, 13, 10
+        pf16c     1,   5, 13,  9
+        pf16c     1,   4, 13,  8
+        pf16c     1,   3, 13,  8
+        pf16c     1,   2, 12, 10
+        pf16c     1,   1, 10, 13
+        pf16c     1,   0,  9, 15
+        pf16c     1,   0,  8, 15
+        pf16c     1,   2,  8, 14
+        pf16c     1,   6, 10,  9
+        pf16c     1,   9, 12,  5
+        pf16c     1,  12, 13,  2
+        pf16c     1,  13, 13,  2
+        pf16c     1,  12, 12,  4
+        pf16c     1,  12, 11,  6
+        pf16c     1,  11, 11,  7
+        pf16c     1,  12, 10,  9
+        pf16c     1,  14, 10, 11
+        pf16c     1,  15,  9, 12
+        pf16c     1,  15,  9, 13
+        pf16c     1,  12, 11, 13
+        pf16c     1,   9, 13, 11
+        pf16c     1,   5, 15,  9
+        pf16c     1,   3, 15,  9
+        pf16c     1,   3, 14, 10
+        pf16c     1,   5, 13, 13
+        pf16c     1,   8, 10, 15
+        pf16c     1,  10,  9, 15
+        pf16c     1,  11,  8, 14
+        pf16c     1,  13,  7, 12
+        pf16c     1,  14,  7,  9
+        pf16c     1,  14,  7,  7
+        pf16c     1,  13,  9,  6
+        pf16c     1,  11, 11,  4
+        pf16c     1,   9, 13,  4
+        pf16c     2,   7, 14,  3
+        pf16c     1,   7, 14,  4
+        pf16c     1,   8, 12,  4
+        pf16c     1,   7, 11,  5
+        pf16c     1,   6, 11,  7
+        pf16c     1,   5, 12, 10
+        pf16c     1,   4, 12, 12
+        pf16c     1,   3, 12, 12
+        pf16c     1,   2, 12,  9
+        pf16c     1,   2, 11,  5
+        pf16c     2,   2, 11,  0
+        pf16c     1,   3, 12,  0
+        pf16c     1,   5, 13,  0
+        pf16c     1,   6, 14,  2
+        pf16c     1,   7, 14,  5
+        pf16c     1,   9, 15,  7
+        pf16c     1,  10, 15, 10
+        pf16c     1,  11, 15, 11
+        pf16c     2,  11, 15, 12
+        pf16c     1,  10, 15, 10
+        pf16c     1,   8, 15,  7
+        pf16c     1,   7, 15,  6
+        pf16c     1,   7, 15,  7
+        pf16c     1,   7, 15,  9
+        pf16c     1,   7, 14, 10
+        pf16c     1,   7, 13, 11
+        pf16c     1,   9, 13, 10
+        pf16c     1,  10, 12,  9
+        pf16c     1,  11, 10,  8
+        pf16c     1,  12,  9,  6
+        pf16c     1,  12,  8,  4
+        pf16c     1,  11,  7,  2
+        pf16c     1,  10,  6,  0
+        pf16c     1,   8,  7,  0
+        pf16c     1,   6,  9,  0
+        pf16c     1,   2, 12,  0
+        pf16c     1,   0, 14,  2
+        pf16c     1,   0, 15,  3
+        pf16c     1,   0, 15,  5
+        pf16c     1,   1, 14,  6
+        pf16c     1,   4, 12,  7
+        pf16c     1,   6, 11,  8
+        pf16c     1,   7, 10,  8
+        pf16c     1,   7, 10,  7
+        pf16c     1,   6, 10,  7
+        pf16c     1,   6, 11,  7
+        pf16c     1,   7, 12,  9
+        pf16c     1,   7, 13, 12
+        pf16c     1,   7, 14, 14
+        pf16c     1,   7, 15, 15
+        pf16c     1,   7, 14, 14
+        pf16c     1,   6, 13, 12
+        pf16c     1,   6, 11,  9
+        pf16c     1,   5, 10,  7
+        pf16c     1,   6, 11,  5
+        pf16c     1,   6, 11,  3
+        pf16c     1,   7, 12,  2
+        pf16c     1,   8, 13,  1
+        pf16c     1,   9, 14,  3
+        pf16c     1,  10, 15,  6
+        pf16c     1,  10, 15,  8
+        pf16c     1,  11, 15, 10
+        pf16c     1,  10, 15,  9
+        pf16c     1,  10, 15,  7
+        pf16c     1,   9, 14,  5
+        pf16c     1,   8, 13,  3
+        pf16c     1,   7, 13,  2
+        pf16c     1,   6, 12,  2
+        pf16c     2,   5, 12,  2
+        pf16c     1,   6, 13,  4
+        pf16c     1,   9, 14,  5
+        pf16c     1,  11, 15,  7
+        pf16c     1,  12, 15,  9
+        pf16c     1,  12, 15, 10
+        pf16c     1,  12, 13, 10
+        pf16c     1,  11, 11, 11
+        pf16c     1,   9,  9, 11
+        pf16c     1,   6,  7, 10
+        pf16c     1,   3,  6, 10
+        pf16c     1,   0,  4,  9
+        pf16c     1,   0,  3,  8
+        pf16c     1,   0,  5,  6
+        pf16c     1,   2,  7,  4
+        pf16c     1,   4,  9,  1
+        pf16c     1,   7, 11,  0
+        pf16c     1,   8, 12,  1
+        pf16c     1,   9, 12,  3
+        pf16c     1,   9, 12,  5
+        pf16c     1,   9, 11,  7
+        pf16c     1,   9, 12,  9
+        pf16c     1,   8, 11, 10
+        pf16c     1,   7, 11, 11
+        endbab
+
+PM_Pat_HQPulseJet:
+        pattern PATDF_16C, 16, 1, PATSF_BAPM_PMF, 21
+        dw BAPM_Pal_Ramp16_Flame, 0, 0
+        bablock
+        pf16c     4,  12,  8,  5
+        pf16c     2,  12,  8,  6
+        pf16c     2,  13,  8,  6
+        pf16c     2,  14,  8,  6
+        pf16c     3,  15,  8,  6
+        pf16c     3,  15,  9,  6
+        pf16c     2,  15, 10,  6
+        pf16c     3,  14, 11,  6
+        pf16c     2,  13, 11,  6
+        pf16c     2,  12, 11,  7
+        pf16c     2,  11, 11,  7
+        pf16c     2,  11, 10,  8
+        pf16c     1,  10, 10,  8
+        pf16c     2,  10,  9,  8
+        pf16c     2,  10,  8,  8
+        pf16c     1,  11,  8,  7
+        pf16c     4,  11,  7,  7
+        pf16c     1,  11,  7,  6
+        pf16c     3,  12,  7,  6
+        pf16c     4,  12,  7,  5
+        pf16c     1,  12,  8,  5
+        endbab
+
+
+INCLUDE_MORSE equ 1
 
   if INCLUDE_MORSE
 
-num_frames = 0
+; Temporal Morse (the usual kind)
+
 morse_dash macro
         pf4c      3,   1,  1,  1
         pf4c      1,   0,  0,  0
-num_frames = num_frames + 2
+num_frames += 2
   endm
+
 morse_dot macro
         pf4c      1,   2,  2,  2
         pf4c      1,   0,  0,  0
-num_frames = num_frames + 2
+num_frames += 2
   endm
+
 morse_letter_space macro
         pf4c      2,   0,  0,  0
-num_frames = num_frames + 1
+num_frames += 1
   endm
+
 morse_word_space macro
         pf4c      3,   0,  0,  0
         pf4c      3,   0,  0,  0
-num_frames = num_frames + 2
+num_frames += 2
   endm
+
 morse_A macro
         morse_dot
         morse_dash
@@ -6885,6 +8759,239 @@ morse_question macro
         morse_letter_space
   endm
 
+; Spatial Morse (Persistence of Vision)
+
+smorse_dash macro
+        pf4c      1,   1,  1,  1
+        pf4c      3,   1,  1,  1
+        pf4c      2,   0,  0,  0
+num_frames += 3
+  endm
+
+smorse_dot macro
+        pf4c      1,   2,  2,  2
+        pf4c      2,   0,  0,  0
+num_frames += 2
+  endm
+
+smorse_letter_space macro
+        pf4c      3,   0,  0,  0
+num_frames += 1
+  endm
+
+smorse_word_space macro
+        pf4c      3,   0,  0,  0
+        pf4c      3,   0,  0,  0
+        pf4c      3,   0,  0,  0
+num_frames += 3
+  endm
+
+smorse_A macro
+        smorse_dot
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_B macro
+        smorse_dash
+        smorse_dot
+        smorse_dot
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_C macro
+        smorse_dash
+        smorse_dot
+        smorse_dash
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_D macro
+        smorse_dash
+        smorse_dot
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_E macro
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_F macro
+        smorse_dot
+        smorse_dot
+        smorse_dash
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_G macro
+        smorse_dash
+        smorse_dash
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_H macro
+        smorse_dot
+        smorse_dot
+        smorse_dot
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_I macro
+        smorse_dot
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_J macro
+        smorse_dot
+        smorse_dash
+        smorse_dash
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_K macro
+        smorse_dash
+        smorse_dot
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_L macro
+        smorse_dot
+        smorse_dash
+        smorse_dot
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_M macro
+        smorse_dash
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_N macro
+        smorse_dash
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_O macro
+        smorse_dash
+        smorse_dash
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_P macro
+        smorse_dot
+        smorse_dash
+        smorse_dash
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_Q macro
+        smorse_dash
+        smorse_dash
+        smorse_dot
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_R macro
+        smorse_dot
+        smorse_dash
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_S macro
+        smorse_dot
+        smorse_dot
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_T macro
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_U macro
+        smorse_dot
+        smorse_dot
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_V macro
+        smorse_dot
+        smorse_dot
+        smorse_dot
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_W macro
+        smorse_dot
+        smorse_dash
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_X macro
+        smorse_dash
+        smorse_dot
+        smorse_dot
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_Y macro
+        smorse_dash
+        smorse_dot
+        smorse_dash
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_Z macro
+        smorse_dash
+        smorse_dash
+        smorse_dot
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_apos macro
+        smorse_dot
+        smorse_dash
+        smorse_dash
+        smorse_dash
+        smorse_dash
+        smorse_dot
+        smorse_letter_space
+  endm
+smorse_period macro
+        smorse_dot
+        smorse_dash
+        smorse_dot
+        smorse_dash
+        smorse_dot
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_comma macro
+        smorse_dash
+        smorse_dash
+        smorse_dot
+        smorse_dot
+        smorse_dash
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_exclaim macro
+        smorse_dash
+        smorse_dot
+        smorse_dash
+        smorse_dot
+        smorse_dash
+        smorse_dash
+        smorse_letter_space
+  endm
+smorse_question macro
+        smorse_dot
+        smorse_dot
+        smorse_dash
+        smorse_dash
+        smorse_dot
+        smorse_dot
+        smorse_letter_space
+  endm
+
 ; This message is n = 378 dit units long, including the terminal spacing.
 ; The PWM is good for f = 443Hz. The message takes T_m = n*(1/f) = 0.853273s
 ; to transmit. The poi stick is w = 0.028m wide. To avoid smudging, the
@@ -6902,9 +9009,10 @@ morse_question macro
 ;   3    2.56s   4.1m/s, 14.9km/h
 
 PM_Pat_Morse:
-        pattern PATDF_4C, 4, 96, PATSF_BAPM_PMF, num_frames
+        pattern PATDF_4C, 4, 96, PATSF_BAPM_PMF, NUM_MORSE_FRAMES
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
+num_frames = 0
         morse_H
         morse_E
         morse_L
@@ -6941,9 +9049,52 @@ PM_Pat_Morse:
         morse_Y
         morse_exclaim
         morse_word_space
-        morse_word_space
-        morse_word_space
         endbab
+
+NUM_MORSE_FRAMES equ num_frames
+  if NUM_MORSE_FRAMES > 256
+    messg "Morse code message takes up more than 256 animation frames."
+  endif
+
+PM_Pat_SMorse:
+        pattern PATDF_4C, 4, 1, PATSF_BAPM_PMF, NUM_SMORSE_FRAMES
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+num_frames = 0
+        smorse_T
+        smorse_I
+        smorse_M
+        smorse_E
+        smorse_word_space
+        smorse_F
+        smorse_O
+        smorse_R
+        smorse_word_space
+        smorse_T
+        smorse_E
+        smorse_A
+        smorse_word_space
+        smorse_A
+        smorse_N
+        smorse_D
+        smorse_word_space
+        smorse_B
+        smorse_I
+        smorse_S
+        smorse_C
+        smorse_U
+        smorse_I
+        smorse_T
+        smorse_S
+        smorse_exclaim
+        smorse_word_space
+        endbab
+
+NUM_SMORSE_FRAMES equ num_frames
+  if NUM_SMORSE_FRAMES > 256
+    messg "S-Morse code message takes up more than 256 animation frames."
+  endif
+
   endif
 
 
@@ -6954,54 +9105,124 @@ PM_Pat_Morse:
 
 PM_PatAddrTable:
   resetenum
-  enumdat PAT_UNISON_TRI_RAINBOW, dw, PM_Pat_UnisonTriRainbow
-  enumdat PAT_TRI_RAINBOW,        dw, PM_Pat_TriRainbow
-  enumdat PAT_LAG_TRI_RAINBOW,    dw, PM_Pat_LagTriRainbow
+  enumdat PAT_UNI_RAINBOW,        dw, PM_Pat_UniRainbow
+  enumdat PAT_BAL_RAINBOW,        dw, PM_Pat_BalRainbow
+  enumdat PAT_LAG_RAINBOW,        dw, PM_Pat_LagRainbow
+  enumdat PAT_OUT_RAINBOW,        dw, PM_Pat_OutRainbow
+  enumdat PAT_FAST_UNI_RAINBOW,   dw, PM_Pat_FastUniRainbow
+  enumdat PAT_FAST_BAL_RAINBOW,   dw, PM_Pat_FastBalRainbow
   enumdat PAT_SOLID_STEPS,        dw, PM_Pat_SolidSteps
   enumdat PAT_SOLID,              dw, PM_Pat_Solid
   enumdat PAT_HAVE_YOU_SEEN_MY_POI, dw, PM_Pat_HaveYouSeenMyPoi
-  enumdat PAT_FLASH,              dw, PM_Pat_Flash
-  enumdat PAT_RIM_WTD_SOLID,      dw, PM_Pat_RimWeightedSolid
-  enumdat PAT_RIM_WTD_FLASH,      dw, PM_Pat_RimWeightedFlash
+  enumdat PAT_FLASH1,             dw, PM_Pat_Flash1
+  enumdat PAT_FLASH2,             dw, PM_Pat_Flash2
+  enumdat PAT_FLASH3,             dw, PM_Pat_Flash3
+  enumdat PAT_RIM_WTD_PACKED1,    dw, PM_Pat_RimWtdPacked1
+  enumdat PAT_RIM_WTD_PACKED2,    dw, PM_Pat_RimWtdPacked2
+  enumdat PAT_RIM_WTD_PACKED3,    dw, PM_Pat_RimWtdPacked3
+  enumdat PAT_RIM_WTD_SPACED3,    dw, PM_Pat_RimWtdSpaced3
+  enumdat PAT_RIM_WTD_FLASH1,     dw, PM_Pat_RimWtdFlash1
+  enumdat PAT_RIM_WTD_FLASH2,     dw, PM_Pat_RimWtdFlash2
+  enumdat PAT_RIM_WTD_FLASH3,     dw, PM_Pat_RimWtdFlash3
+  enumdat PAT_HUB_WTD_PACKED1,    dw, PM_Pat_HubWtdPacked1
+  enumdat PAT_HUB_WTD_PACKED2,    dw, PM_Pat_HubWtdPacked2
+  enumdat PAT_HUB_WTD_PACKED3,    dw, PM_Pat_HubWtdPacked3
+  enumdat PAT_HUB_WTD_SPACED3,    dw, PM_Pat_HubWtdSpaced3
+  enumdat PAT_HUB_WTD_FLASH1,     dw, PM_Pat_HubWtdFlash1
+  enumdat PAT_HUB_WTD_FLASH2,     dw, PM_Pat_HubWtdFlash2
+  enumdat PAT_HUB_WTD_FLASH3,     dw, PM_Pat_HubWtdFlash3
+  enumdat PAT_RAMP_UP2,           dw, PM_Pat_RampUp2
+  enumdat PAT_RAMP_UP3,           dw, PM_Pat_RampUp3
+  enumdat PAT_RAMP_DOWN2,         dw, PM_Pat_RampDown2
+  enumdat PAT_RAMP_DOWN3,         dw, PM_Pat_RampDown3
+  enumdat PAT_WAVE_OUT,           dw, PM_Pat_WaveOut
+  enumdat PAT_WAVE_IN,            dw, PM_Pat_WaveIn
+  enumdat PAT_FAT_WAVE_OUT,       dw, PM_Pat_FatWaveOut
+  enumdat PAT_FAT_WAVE_IN,        dw, PM_Pat_FatWaveIn
+  enumdat PAT_INTERDIGITATION_P,  dw, PM_Pat_InterdigitationP
+  enumdat PAT_INTERDIGITATION_S,  dw, PM_Pat_InterdigitationS
   enumdat PAT_ALTERNATE,          dw, PM_Pat_Alternate
-  enumdat PAT_SOFT_FLASH,         dw, PM_Pat_SoftFlash
+  enumdat PAT_JAMMY_BATTENBERG,   dw, PM_Pat_JammyBattenberg
+  enumdat PAT_SOFT_FLASH2,        dw, PM_Pat_SoftFlash2
+  enumdat PAT_SOFT_FLASH3,        dw, PM_Pat_SoftFlash3
+  enumdat PAT_SOFT_FLASH2_X,      dw, PM_Pat_SoftFlash2X
+  enumdat PAT_SOFT_FLASH3_X,      dw, PM_Pat_SoftFlash3X
   enumdat PAT_DOGS,               dw, PM_Pat_Dogs
+  enumdat PAT_DOG_MEDLEY,         dw, PM_Pat_DogMedley
   enumdat PAT_SOFT_DOGS,          dw, PM_Pat_SoftDogs
+  enumdat PAT_SOFT_DOG_MEDLEY,    dw, PM_Pat_SoftDogMedley
   enumdat PAT_SQUARES_FIXED5,     dw, PM_Pat_Squares_Fixed5
   enumdat PAT_SQUARES_USER2,      dw, PM_Pat_Squares_User2
+  enumdat PAT_SQUARES_USER3,      dw, PM_Pat_Squares_User3
   enumdat PAT_QUANTUM_SLALOM_F6,  dw, PM_Pat_QuantumSlalom_Fixed6
   enumdat PAT_QUANTUM_SLALOM_U2,  dw, PM_Pat_QuantumSlalom_User2
-  enumdat PAT_TERMINALS_FIXED6,   dw, PM_Pat_Terminals_Fixed6
+  enumdat PAT_TERMINALS_U2F4,     dw, PM_Pat_Terminals_U2F4
   enumdat PAT_TERMINALS_USER2,    dw, PM_Pat_Terminals_User2
+  enumdat PAT_CROWN,              dw, PM_Pat_Crown
+  enumdat PAT_SUNBURST,           dw, PM_Pat_Sunburst
+  enumdat PAT_TRI_BOUNCE,         dw, PM_Pat_TriBounce
+  enumdat PAT_TRI_BOUNCE_SPACED,  dw, PM_Pat_TriBounceSpaced
   enumdat PAT_TRIANGLES_NEAR_ME,  dw, PM_Pat_TrianglesNearMe_Fixed5
   enumdat PAT_TNM_USER2,          dw, PM_Pat_TrianglesNearMe_User2
+  enumdat PAT_TNM_USER3,          dw, PM_Pat_TrianglesNearMe_User3
   enumdat PAT_ZIGZAG,             dw, PM_Pat_ZigZag
   enumdat PAT_CONSUMMATE_VS,      dw, PM_Pat_ConsummateVs
   enumdat PAT_STEP,               dw, PM_Pat_Step
   enumdat PAT_SPOKES,             dw, PM_Pat_Spokes
   enumdat PAT_SPOKES2,            dw, PM_Pat_Spokes2
-  enumdat PAT_WAVY_SPOKES,        dw, PM_Pat_WavySpokes
-  enumdat PAT_CHEVRONS,           dw, PM_Pat_Chevrons
+  enumdat PAT_SPOKES3,            dw, PM_Pat_Spokes3
+  enumdat PAT_SPOTS_BARS,         dw, PM_Pat_SpotsBars
+  enumdat PAT_RAD_CON,            dw, PM_Pat_RadCon
+  enumdat PAT_TWIST,              dw, PM_Pat_Twist
+  enumdat PAT_PIED_CAT_NOSES,     dw, PM_Pat_PiedCatNoses
+  enumdat PAT_POLAR_CAT_NOSES,    dw, PM_Pat_PolarCatNoses
+  enumdat PAT_CHAIN,              dw, PM_Pat_Chain
+  enumdat PAT_BARBERPOLE2,        dw, PM_Pat_Barberpole2
+  enumdat PAT_BARBERPOLE3,        dw, PM_Pat_Barberpole3
+  enumdat PAT_BARBERPOLE3S,       dw, PM_Pat_Barberpole3S
+  enumdat PAT_FAT_BARBERPOLE2,    dw, PM_Pat_FatBarberpole2
+  enumdat PAT_FAT_BARBERPOLE3,    dw, PM_Pat_FatBarberpole3
+  enumdat PAT_FAT_BARBERPOLE3S,   dw, PM_Pat_FatBarberpole3S
+  enumdat PAT_SOFT_BARBERPOLE2,   dw, PM_Pat_SoftBarberpole2
+  enumdat PAT_SOFT_BARBERPOLE3,   dw, PM_Pat_SoftBarberpole3
+  enumdat PAT_SOFT_BARBERPOLE3S,  dw, PM_Pat_SoftBarberpole3S
+  enumdat PAT_WAVY_SPOKES2,       dw, PM_Pat_WavySpokes2
+  enumdat PAT_WAVY_SPOKES3,       dw, PM_Pat_WavySpokes3
+  enumdat PAT_CHEVRONS2,          dw, PM_Pat_Chevrons2
+  enumdat PAT_CHEVRONS3,          dw, PM_Pat_Chevrons3
   enumdat PAT_WEAVE,              dw, PM_Pat_Weave
   enumdat PAT_LUM_CRAWL,          dw, PM_Pat_LumCrawl
-  enumdat PAT_CHEQUER_K,          dw, PM_Pat_ChequerK
-  enumdat PAT_CHEQUER_W,          dw, PM_Pat_ChequerW
-  enumdat PAT_CHEQUER_2,          dw, PM_Pat_Chequer2
+  enumdat PAT_CHEQUER,            dw, PM_Pat_Chequer
   enumdat PAT_BY_YOUR_COMMAND,    dw, PM_Pat_ByYourCommand
-  enumdat PAT_AWL,                dw, PM_Pat_AWL
   enumdat PAT_BLUR_STEP,          dw, PM_Pat_BlurStep
-  enumdat PAT_INTENSE_DECAY,      dw, PM_Pat_IntenseDecay
+  enumdat PAT_DECAY2,             dw, PM_Pat_Decay2
+  enumdat PAT_DECAY3,             dw, PM_Pat_Decay3
+  enumdat PAT_DECAY2_X,           dw, PM_Pat_Decay2X
+  enumdat PAT_DECAY3_X,           dw, PM_Pat_Decay3X
   enumdat PAT_BOOKENDS,           dw, PM_Pat_Bookends
+  enumdat PAT_BOOKENDS_X,         dw, PM_Pat_BookendsX
   enumdat PAT_SLIDES,             dw, PM_Pat_Slides
-  if INCLUDE_MORSE
-    enumdat PAT_MORSE,            dw, PM_Pat_Morse
-  endif
+  enumdat PAT_ALIEN_CIRCUITRY,    dw, PM_Pat_AlienCircuitry
   enumdat PAT_TRIC_SOLID,         dw, PM_Pat_TriC_Solid
   enumdat PAT_TRIC_FLASH,         dw, PM_Pat_TriC_Flash
   enumdat PAT_TRIC_DASHES,        dw, PM_Pat_TriC_Dashes
   enumdat PAT_TRIR_SOLID,         dw, PM_Pat_TriR_Solid
   enumdat PAT_TRIR_SPACED,        dw, PM_Pat_TriR_Spaced
   enumdat PAT_TRI_CHASER,         dw, PM_Pat_TriChaser
+  enumdat PAT_FIREFLY,            dw, PM_Pat_Firefly
+  enumdat PAT_ICE_STORM,          dw, PM_Pat_IceStorm
+  enumdat PAT_PULSE_JET,          dw, PM_Pat_PulseJet
+  enumdat PAT_HUB_BRAZIER,        dw, PM_Pat_HubBrazier
+  enumdat PAT_RIM_BRAZIER,        dw, PM_Pat_RimBrazier
+  enumdat PAT_MID_BRAZIER,        dw, PM_Pat_MidBrazier
+  enumdat PAT_HQ_HUB_BRAZIER,     dw, PM_Pat_HQHubBrazier
+  enumdat PAT_HQ_RIM_BRAZIER,     dw, PM_Pat_HQRimBrazier
+  enumdat PAT_HQ_MID_BRAZIER,     dw, PM_Pat_HQMidBrazier
+  enumdat PAT_HQ_PULSEJET,        dw, PM_Pat_HQPulseJet
+  if INCLUDE_MORSE
+    enumdat PAT_MORSE,            dw, PM_Pat_Morse
+    enumdat PAT_SMORSE,           dw, PM_Pat_SMorse
+  endif
 
 
 ;------------------------------------------------------------------------------
@@ -7035,6 +9256,9 @@ PM_PatTable_Bank#v(_ptbn):
 
 endpattable macro
 NUM_PATS_IN_BANK#v(_ptbn) equ BAPM_BYTE_OFFSET / 4
+  if NUM_PATS_IN_BANK#v(_ptbn) > 64
+    error "Too many patterns in bank. (64 is the maximum.)"
+  endif
   endbab
   endm
 
@@ -7052,8 +9276,28 @@ pat_er macro pat_id, rampa, rampb, rampc, fupscaler, fup
     dbab (((fupscaler) & 3) << 6) | ((rampc) & 63)
   endm
 
-#define TRIPLICATE(rampid) (rampid), (rampid), (rampid)
-#define R2PLUSW(rampa, rampb) (rampa), (rampb), R_WHT
+banktable macro
+    dw  NUM_BANKS
+  endm
+
+endbanktable macro
+NUM_BANKS equ ($ - PM_BankTable - 1)
+  if NUM_BANKS > 16
+    error "Too many pattern banks! (16 is the maximum.)"
+  endif
+  if NUM_BANKS > 15
+    if NUM_RAMPS > 63
+      error "NUM_BANKS and NUM_BANKS must not both be at their maximums!"
+      ; When NUM_BANKS = 16 and NUM_BANKS = 64, it is possible for the user
+      ; to create a Favourite Pattern record that is all bit ones, which is
+      ; the list terminator for the Favourites Patterns list.
+    endif
+  endif
+  endm
+
+patbank macro bankaddr
+    dw  bankaddr
+  endm
 
 
 ;------------------------------------------------------------------------------
@@ -7063,11 +9307,16 @@ pat_er macro pat_id, rampa, rampb, rampc, fupscaler, fup
 
   pattable 0
     ; Rainbows and solid colours
-    pat_fixed PAT_UNISON_TRI_RAINBOW, 1, 8
-    pat_fixed PAT_TRI_RAINBOW,        0, 1
-    pat_fixed PAT_LAG_TRI_RAINBOW,    0, 4
-    pat_fixed PAT_SOLID_STEPS,        3, 7
-    pat_fixed PAT_SOLID_STEPS,        0, 1
+    pat_fixed PAT_UNI_RAINBOW,           1, 8
+    pat_fixed PAT_BAL_RAINBOW,           0, 1
+    pat_fixed PAT_LAG_RAINBOW,           0, 3
+    pat_fixed PAT_OUT_RAINBOW,           0, 4
+    pat_fixed PAT_FAST_UNI_RAINBOW,      0, 1
+    pat_fixed PAT_FAST_BAL_RAINBOW,      0, 3
+    pat_fixed PAT_SOLID_STEPS,           3, 7
+    pat_fixed PAT_SOLID_STEPS,           2, 4
+    pat_fixed PAT_SOLID_STEPS,           1, 3
+    pat_fixed PAT_SOLID_STEPS,           0, 2
     pat_er    PAT_SOLID,  R_RED,  0, 0,  0, 1
     pat_er    PAT_SOLID,  R_BLZ,  0, 0,  0, 1
     pat_er    PAT_SOLID,  R_ORA,  0, 0,  0, 1
@@ -7084,10 +9333,184 @@ pat_er macro pat_id, rampa, rampb, rampc, fupscaler, fup
     pat_er    PAT_SOLID,  R_CER,  0, 0,  0, 1
     pat_er    PAT_SOLID,  R_PNK,  0, 0,  0, 1
     pat_er    PAT_SOLID,  R_WHT,  0, 0,  0, 1
-    pat_er    PAT_HAVE_YOU_SEEN_MY_POI, R_RED1,  0, 0,  0, 1
   endpattable
 
   pattable 1
+    ; Pyromania
+    pat_er    PAT_HQ_HUB_BRAZIER,   R16_FLAME,   0, 0,  1, 3
+    pat_er    PAT_HQ_MID_BRAZIER,   R16_FLAME,   0, 0,  1, 3
+    pat_er    PAT_HQ_RIM_BRAZIER,   R16_FLAME,   0, 0,  1, 3
+    pat_er    PAT_HQ_HUB_BRAZIER,   R16_BLAZE,   0, 0,  1, 3
+    pat_er    PAT_HQ_MID_BRAZIER,   R16_BLAZE,   0, 0,  1, 3
+    pat_er    PAT_HQ_RIM_BRAZIER,   R16_BLAZE,   0, 0,  1, 3
+    pat_er    PAT_HQ_HUB_BRAZIER,   R16_FLURPLE, 0, 0,  0, 6
+    pat_er    PAT_HQ_MID_BRAZIER,   R16_FLURPLE, 0, 0,  0, 6
+    pat_er    PAT_HQ_RIM_BRAZIER,   R16_FLURPLE, 0, 0,  0, 6
+    pat_er    PAT_HUB_BRAZIER,      R_MINT,      0, 0,  1, 6
+    pat_er    PAT_MID_BRAZIER,      R_MINT,      0, 0,  1, 6
+    pat_er    PAT_RIM_BRAZIER,      R_MINT,      0, 0,  1, 6
+    pat_er    PAT_HQ_PULSEJET,      R16_BUNSEN,  0, 0,  0, 4
+    pat_er    PAT_PULSE_JET,        R_BUNSEN_E,  0, 0,  1, 4
+    pat_er    PAT_PULSE_JET,        R_STRAWBRY,  0, 0,  0, 4
+  endpattable
+
+  pattable 2
+    ; One flat colour
+    pat_er    PAT_ZIGZAG,           R_VIO,  0,      0,      2, 1
+    pat_er    PAT_ZIGZAG,           R_ORA,  0,      0,      1, 2
+    pat_er    PAT_ZIGZAG,           R_CYN,  0,      0,      0, 1
+    pat_er    PAT_FLASH1,           R_VIO,  0,      0,      1, 3
+    pat_er    PAT_FLASH1,           R_SKY,  0,      0,      0, 2
+    pat_er    PAT_STEP,             R_GRN,  0,      0,      1, 3
+    pat_er    PAT_STEP,             R_BLZ,  0,      0,      1, 2
+    pat_er    PAT_STEP,             R_BLU,  0,      0,      0, 3
+    pat_er    PAT_STEP,             R_YEL,  0,      0,      0, 2
+    pat_er    PAT_STEP,             R_SKY,  0,      0,      0, 1
+    pat_er    PAT_SPOKES,           R_VIO,  0,      0,      1, 2
+    pat_er    PAT_SPOKES,           R_RED,  0,      0,      0, 3
+    pat_er    PAT_SPOKES,           R_YEL,  0,      0,      0, 2
+    pat_er    PAT_SPOKES,           R_SKY,  0,      0,      0, 1
+  endpattable
+
+  pattable 3
+    ; Two or three flat colours, Set A
+    pat_er    PAT_FLASH2,           R_BLU1, R_CYN,  0,      1, 2
+    pat_er    PAT_FLASH2,           R_RED,  R_SKY,  0,      1, 3
+    pat_er    PAT_FLASH2,           R_RED,  R_CER,  0,      0, 3
+    pat_er    PAT_FLASH3,           R_GRN,  R_BLU1, R_ORA,  1, 2
+    pat_er    PAT_FLASH3,           R_YEL,  R_SKY,  R_RED,  0, 2
+    pat_er    PAT_ALTERNATE,        R_YEL,  R_RED1, 0,      1, 6
+    pat_er    PAT_ALTERNATE,        R_BLU1, R_SNT,  0,      1, 4
+    pat_er    PAT_ALTERNATE,        R_RED,  R_SKY,  0,      0, 5
+    pat_er    PAT_RAD_CON,          R_SKY,  R_BLZ,  0,      0, 2
+    pat_er    PAT_RAD_CON,          R_WHT,  R_GRN1, 0,      1, 1
+    pat_er    PAT_SQUARES_USER2,    R_RED,  R_WHT,  0,      0, 4
+    pat_er    PAT_SQUARES_USER3,    R_GRN,  R_ORA,  R_SKY,  0, 4
+    pat_er    PAT_QUANTUM_SLALOM_U2,R_CER,  R_GRN,  R_WHT,  0, 2
+    pat_er    PAT_TERMINALS_USER2,  R_BLZ,  R_BLZ,  R_BLU1, 1, 2
+    pat_er    PAT_TERMINALS_USER2,  R_RED,  R_SKY,  R_BLK,  0, 2
+    pat_er    PAT_TRI_BOUNCE,       R_GRN,  R_ORA,  R_RED,  1, 3
+    pat_er    PAT_TRI_BOUNCE,       R_YEL,  R_CYN,  R_YEL,  0, 3
+    pat_er    PAT_TRI_BOUNCE_SPACED,R_RED,  R_GRN1, R_BLU,  1, 3
+    pat_er    PAT_TRI_BOUNCE_SPACED,R_PUR,  R_WHT,  R_PUR,  0, 3
+    pat_er    PAT_CROWN,            R_RED,  R_BLZ,  R_YEL,  1, 3
+    pat_er    PAT_CROWN,            R_BLU1, R_CER,  R_SGR,  0, 3
+    pat_er    PAT_SUNBURST,         R_YEL,  R_YEL,  R_YEL,  1, 3
+    pat_er    PAT_SUNBURST,         R_RED1, R_CER,  R_WHT,  0, 3
+    pat_er    PAT_JAMMY_BATTENBERG, R_BLU1, R_ORA1, R_YEL,  1, 3
+  endpattable
+
+  pattable 4
+    ; Two or three flat colours, Set B
+    pat_er    PAT_DOGS,             R_ORA,  R_VIO,  0,      1, 2
+    pat_er    PAT_DOGS,             R_YEL,  R_SKY,  0,      0, 3
+    pat_er    PAT_DOGS,             R_CYN,  R_CER,  0,      0, 2
+    pat_er    PAT_DOGS,             R_SNT,  R_RED1, 0,      0, 1
+    pat_er    PAT_TNM_USER2,        R_BLZ,  R_SKY,  0,      0, 4
+    pat_er    PAT_TNM_USER3,        R_BLU1, R_YEL,  R_CER,  0, 3
+    pat_er    PAT_CONSUMMATE_VS,    R_YEL,  R_SKY,  0,      1, 2
+    pat_er    PAT_CONSUMMATE_VS,    R_SKY,  R_WHT,  0,      0, 2
+    pat_er    PAT_CONSUMMATE_VS,    R_GRN1, R_RED,  0,      0, 1
+    pat_er    PAT_CHEQUER,          R_VIO,  R_BLK,  0,      1, 4
+    pat_er    PAT_CHEQUER,          R_RED1, R_YEL,  0,      0, 5
+    pat_er    PAT_BARBERPOLE2,      R_RED,  R_GRN1, 0,      0, 3
+    pat_er    PAT_BARBERPOLE2,      R_BLZ,  R_CYN,  0,      1, 3
+    pat_er    PAT_BARBERPOLE3,      R_CER,  R_YEL,  R_BLU1, 0, 3
+    pat_er    PAT_BARBERPOLE3,      R_RED1, R_WHT,  R_BLU1, 1, 3
+    pat_er    PAT_BARBERPOLE3S,     R_BLU1, R_WHT,  R_BLU1, 0, 3
+    pat_er    PAT_BARBERPOLE3S,     R_RED1, R_YEL,  R_GRN1, 1, 3
+    pat_er    PAT_FAT_BARBERPOLE2,  R_BLZ,  R_SKY,  0,      0, 2
+    pat_er    PAT_FAT_BARBERPOLE2,  R_ORA,  R_VIO1, 0,      1, 2
+    pat_er    PAT_FAT_BARBERPOLE3,  R_YEL,  R_MAG,  R_SKY,  0, 2
+    pat_er    PAT_FAT_BARBERPOLE3,  R_RED1, R_WHT,  R_BLU1, 1, 2
+    pat_er    PAT_FAT_BARBERPOLE3S, R_CER,  R_WHT,  R_GRN1, 0, 2
+    pat_er    PAT_FAT_BARBERPOLE3S, R_RED1, R_YEL,  R_BLU1, 1, 2
+  endpattable
+
+  pattable 5
+    ; Two or three colour ramps, Set A
+    pat_er    PAT_WEAVE,            R_FIRE, R_ICE,  R_FIRE, 0, 2
+    pat_er    PAT_WEAVE,            R_ICE,  R_STRAWBRY, R_ICE, 0, 1
+    pat_er    PAT_WEAVE,            R_TIEDYED_A, R_TIEDYED_B, R_TIEDYED_A, 0, 2
+    pat_er    PAT_WEAVE,            R_SKY,  R_SKY,  R_SKY,  0, 2
+    pat_er    PAT_SPOTS_BARS,       R_SKY,  R_RED,  R_WHT,  0, 2
+    pat_er    PAT_SOFT_FLASH2,      R_YEL,  R_BLZ,  0,      0, 1
+    pat_er    PAT_SOFT_FLASH2,      R_GOLD, R_WHT,  0,      0, 2
+    pat_er    PAT_SOFT_FLASH2,      R_FIRE, R_ICE,  0,      0, 1
+    pat_er    PAT_SOFT_FLASH3,      R_RED,  R_YEL,  R_BLU,  0, 2
+    pat_er    PAT_SOFT_FLASH2_X,    R_STRAWBRY, R_GOLD, 0,  0, 1
+    pat_er    PAT_SOFT_FLASH3_X,    R_GRN,  R_BLU1, R_ORA,  0, 2
+    pat_er    PAT_SOFT_DOGS,        R_TIEDYED_A, R_TIEDYED_B, 0, 0, 4
+    pat_er    PAT_SOFT_DOGS,        R_BLURPLE, R_BLURPLE, 0, 0, 3
+    pat_er    PAT_SOFT_DOGS,        R_ICE,  R_STRAWBRY, 0,  0, 3
+    pat_er    PAT_SOFT_DOGS,        R_SKY,  R_WHT,  0,      0, 1
+    pat_er    PAT_SOFT_DOGS,        R_FIRE, R_ICE,  0,      0, 1
+    pat_er    PAT_WAVY_SPOKES2,     R_RED,  R_CER,  0,      0, 1
+    pat_er    PAT_WAVY_SPOKES2,     R_FIRE, R_ICE,  0,      0, 1
+    pat_er    PAT_WAVY_SPOKES2,     R_SKY,  R_WHT,  0,      0, 1
+    pat_er    PAT_WAVY_SPOKES3,     R_SNT,  R_VIO1, R_ORA,  0, 1
+    pat_er    PAT_SOFT_BARBERPOLE2, R_RED,  R_WHT,  0,      0, 2
+    pat_er    PAT_SOFT_BARBERPOLE3, R_FIRE, R_WHT,  R_ICE,  0, 2
+    pat_er    PAT_SOFT_BARBERPOLE3S,R_STRAWBRY, R_WHT, R_STRAWBRY, 0, 1
+  endpattable
+
+  pattable 6
+    ; Two or three colour ramps, Set B
+    pat_er    PAT_LUM_CRAWL,        R_FIRE, R_ICE,  0,      0, 5
+    pat_er    PAT_LUM_CRAWL,        R_BLURPLE, R_BLURPLE, 0, 0, 2
+    pat_er    PAT_LUM_CRAWL,        R_ORA,  R_RED,  0,      0, 3
+    pat_er    PAT_CHAIN,            R_FIRE, R_ICE,  0,      0, 2
+    pat_er    PAT_TWIST,            R_CYN,  R_ORA,  0,      0, 2
+    pat_er    PAT_PIED_CAT_NOSES,   R_GOLD, R_BLU1, 0,      0, 2
+    pat_er    PAT_POLAR_CAT_NOSES,  R_FIRE, R_ICE,  0,      0, 2
+    pat_er    PAT_BOOKENDS,         R_FIRE, R_ICE,  0,      0, 1
+    pat_er    PAT_BOOKENDS_X,       R_BLU,  R_RED,  0,      0, 1
+    pat_er    PAT_CHEVRONS2,        R_SKY,  R_WHT,  0,      0, 1
+    pat_er    PAT_CHEVRONS2,        R_GOLD, R_WHT,  0,      0, 1
+    pat_er    PAT_CHEVRONS2,        R_RED_MIST, R_RED_MIST, 0, 0, 1
+    pat_er    PAT_CHEVRONS2,        R_BUNSEN, R_BUNSEN, 0,  0, 1
+    pat_er    PAT_CHEVRONS2,        R_FLAME, R_VIO1, 0,     0, 1
+    pat_er    PAT_CHEVRONS3,        R_RED,  R_WHT,  R_GRN1, 0, 1
+    pat_er    PAT_BLUR_STEP,        R_FLAME, R_FLAME, 0,    0, 3
+    pat_er    PAT_BLUR_STEP,        R_SKY,  R_WHT,  0,      0, 2
+    pat_er    PAT_BLUR_STEP,        R_GOLD, R_WHT,  0,      0, 1
+    pat_er    PAT_DECAY2,           R_FIRE, R_ICE,  0,      0, 2
+    pat_er    PAT_DECAY3,           R_RED,  R_GRN,  BLU,    0, 2
+    pat_er    PAT_DECAY2_X,         R_BUNSEN, R_BUNSEN, 0,  0, 1
+    pat_er    PAT_DECAY3_X,         R_BLU,  R_MAG,  R_RED,  0, 1
+    pat_er    PAT_SPOKES2,          R_BLZ,  R_SKY,  0,      1, 1
+    pat_er    PAT_SPOKES2,          R_YEL,  R_SKY,  0,      0, 1
+    pat_er    PAT_SPOKES3,          R_YEL,  R_RED1, R_SKY,  0, 1
+  endpattable
+
+  pattable 7
+    ; Miscellaneous
+    pat_fixed PAT_BY_YOUR_COMMAND,    0, 1
+    pat_er    PAT_TRIC_SOLID,         R_BLK,  R_BLK,  R_RED,  0, 1
+    pat_er    PAT_ALIEN_CIRCUITRY,    R_RED,  R_BLU,  R_WHT,  0, 2
+    pat_fixed PAT_FIREFLY,            0, 1
+    pat_fixed PAT_ICE_STORM,          0, 2
+    pat_er    PAT_DOG_MEDLEY,         R_GRN,  R_CER,  R_YEL,  1, 2
+    pat_er    PAT_DOG_MEDLEY,         R_VIO,  R_YEL,  R_ORA,  0, 1
+    pat_er    PAT_SOFT_DOG_MEDLEY,    R_GRN,  R_CER,  R_YEL,  1, 2
+    pat_er    PAT_SOFT_DOG_MEDLEY,    R_VIO,  R_YEL,  R_ORA,  0, 1
+    pat_fixed PAT_SQUARES_FIXED5,     0, 4
+    pat_fixed PAT_QUANTUM_SLALOM_F6,  0, 2
+    pat_er    PAT_TERMINALS_U2F4,     R_GRN,  R_CER,  R_BLK,  0, 2
+    pat_fixed PAT_TRIANGLES_NEAR_ME,  0, 4
+    pat_er    PAT_SLIDES,             R_BLZ,  R_SKY,  0,      2, 1
+    pat_er    PAT_SLIDES,             R_YEL,  R_RED1, 0,      1, 3
+    if INCLUDE_MORSE
+      pat_er    PAT_SMORSE,           R_GOLD, 0,      0,      0, 1
+      pat_er    PAT_SMORSE,           R_ICE,  0,      0,      3, 2
+      pat_er    PAT_MORSE,            R_GRN,  0,      0,      0, 2
+      pat_er    PAT_MORSE,            R_STRAWBRY, 0,  0,      2, 4
+      pat_er    PAT_MORSE,            R_FIRE, 0,      0,      3, 2
+    endif
+    pat_er  PAT_HAVE_YOU_SEEN_MY_POI, R_RED,  0,      0,      0, 1
+  endpattable
+
+  pattable 8
     ; Tricolours - Concentric
     pat_er    PAT_TRIC_SOLID,   R_BLU,  R_YEL,  R_CER,  0, 1
     pat_er    PAT_TRIC_SOLID,   R_SKY,  R_WHT,  R_CER,  0, 1
@@ -7151,7 +9574,7 @@ pat_er macro pat_id, rampa, rampb, rampc, fupscaler, fup
     pat_er    PAT_TRIC_DASHES,  R_CYN,  R_SKY,  R_BLU,  1, 3
   endpattable
 
-  pattable 2
+  pattable 9
     ; Tricolours - Chasers and radial bars
     pat_er    PAT_TRI_CHASER,   R_BLU,  R_YEL,  R_CER,  3, 5
     pat_er    PAT_TRI_CHASER,   R_SKY,  R_WHT,  R_CER,  3, 5
@@ -7215,124 +9638,58 @@ pat_er macro pat_id, rampa, rampb, rampc, fupscaler, fup
     pat_er    PAT_TRIR_SPACED,  R_CYN,  R_SKY,  R_BLU,  0, 4
   endpattable
 
-  pattable 3
-    ; One colour
-    pat_er    PAT_ZIGZAG,       TRIPLICATE(R_VIO),  0, 4
-    pat_er    PAT_ZIGZAG,       TRIPLICATE(R_ORA),  0, 1
-    pat_er    PAT_ZIGZAG,       TRIPLICATE(R_CYN),  0, 1
-    pat_er    PAT_STEP,         TRIPLICATE(R_SGR),  1, 3
-    pat_er    PAT_STEP,         TRIPLICATE(R_VIO),  1, 2
-    pat_er    PAT_STEP,         TRIPLICATE(R_BLU),  0, 3
-    pat_er    PAT_STEP,         TRIPLICATE(R_YEL),  0, 2
-    pat_er    PAT_STEP,         TRIPLICATE(R_CYN),  0, 1
-    pat_er    PAT_CHEQUER_K,    TRIPLICATE(R_SKY),  1, 3
-    pat_er    PAT_CHEQUER_K,    TRIPLICATE(R_MAG),  0, 3
-    pat_er    PAT_CHEQUER_W,    TRIPLICATE(R_RED),  1, 3
-    pat_er    PAT_CHEQUER_W,    TRIPLICATE(R_BLU),  0, 3
-    pat_er    PAT_SPOKES,       TRIPLICATE(R_VIO),  1, 2
-    pat_er    PAT_SPOKES,       TRIPLICATE(R_RED),  0, 3
-    pat_er    PAT_SPOKES,       TRIPLICATE(R_YEL),  0, 2
-    pat_er    PAT_SPOKES,       TRIPLICATE(R_SKY),  0, 1
+  pattable 10
+    ; Colour ramps as tricolours, Set A
+    pat_er    PAT_RIM_WTD_PACKED1,    R_STRAWBRY, 0,  0,      0, 1
+    pat_er    PAT_RIM_WTD_PACKED2,    R_FIRE, R_ICE,  0,      1, 4
+    pat_er    PAT_RIM_WTD_PACKED2,    R_BLU1, R_SKY,  0,      0, 3
+    pat_er    PAT_RIM_WTD_PACKED3,    R_GRN,  R_BLU1, R_ORA,  1, 3
+    pat_er    PAT_RIM_WTD_PACKED3,    R_RED,  R_WHT,  R_BLU1, 0, 2
+    pat_er    PAT_RIM_WTD_SPACED3,    R_BLU,  R_YEL,  R_CER,  1, 3
+    pat_er    PAT_RIM_WTD_SPACED3,    R_PUR,  R_WHT,  R_PUR,  0, 2
+    pat_er    PAT_RIM_WTD_FLASH1,     R_BLURPLE, 0,   0,      1, 4
+    pat_er    PAT_RIM_WTD_FLASH1,     R_CER,  0,      0,      0, 2
+    pat_er    PAT_RIM_WTD_FLASH2,     R_GOLD, R_WHT,  0,      1, 3
+    pat_er    PAT_RIM_WTD_FLASH2,     R_SKY,  R_CER,  0,      0, 2
+    pat_er    PAT_RIM_WTD_FLASH3,     R_RED1, R_WHT,  R_GRN1, 1, 3
+    pat_er    PAT_RIM_WTD_FLASH3,     R_BLZ,  R_WHT,  R_SKY,  0, 2
+    pat_er    PAT_INTERDIGITATION_P,  R_VIO,  R_ORA,  0,      1, 3
+    pat_er    PAT_INTERDIGITATION_P,  R_YEL,  R_CYN,  0,      0, 2
+    pat_er    PAT_RAMP_DOWN2,         R_FIRE, R_ICE,  0,      0, 3
+    pat_er    PAT_RAMP_DOWN3,         R_RED,  R_GRN,  R_BLU,  0, 2
+    pat_er    PAT_FAT_WAVE_OUT,       R_STRAWBRY, 0,  0,      2, 2
+    pat_er    PAT_FAT_WAVE_OUT,       R_GOLD, 0,      0,      1, 4
+    pat_er    PAT_FAT_WAVE_OUT,       R_BUNSEN, 0,    0,      0, 4
+    pat_er    PAT_WAVE_OUT,           R_MINT, 0,      0,      2, 2
+    pat_er    PAT_WAVE_OUT,           R_FIRE, 0,      0,      1, 4
+    pat_er    PAT_WAVE_OUT,           R_ICE,  0,      0,      0, 4
   endpattable
 
-  pattable 4
-    ; Two colours
-    pat_er    PAT_FLASH,              R2PLUSW(R_RED,  R_WHT),  1, 2
-    pat_er    PAT_FLASH,              R2PLUSW(R_VIO,  R_VIO),  1, 2
-    pat_er    PAT_FLASH,              R2PLUSW(R_GRN,  R_GRN),  1, 2
-    pat_er    PAT_FLASH,              R2PLUSW(R_RED,  R_CER),  0, 3
-    pat_er    PAT_FLASH,              R2PLUSW(R_YEL,  R_SKY),  0, 2
-    pat_er    PAT_FLASH,              R2PLUSW(R_RED,  R_SKY),  0, 1
-    pat_er    PAT_FLASH,              R2PLUSW(R_SKY,  R_SKY),  0, 1
-    pat_er    PAT_ALTERNATE,          R2PLUSW(R_ORA,  R_VIO),  1, 6
-    pat_er    PAT_ALTERNATE,          R2PLUSW(R_GRN,  R_WHT),  1, 6
-    pat_er    PAT_ALTERNATE,          R2PLUSW(R_SKY,  R_WHT),  0, 5
-    pat_er    PAT_ALTERNATE,          R2PLUSW(R_RED,  R_SKY),  0, 3
-    pat_er    PAT_SQUARES_USER2,      R2PLUSW(R_RED,  R_WHT),  0, 4
-    pat_er    PAT_QUANTUM_SLALOM_U2,  R2PLUSW(R_CER,  R_GRN),  0, 2
-    pat_er    PAT_TERMINALS_USER2,    R2PLUSW(R_RED,  R_SKY),  0, 2
-    pat_er    PAT_DOGS,               R2PLUSW(R_ORA,  R_VIO),  1, 2
-    pat_er    PAT_DOGS,               R2PLUSW(R_FIRE, R_ICE),  1, 2
-    pat_er    PAT_DOGS,               R2PLUSW(R_SKY,  R_WHT),  0, 1
-    pat_er    PAT_DOGS,               R2PLUSW(R_YEL,  R_SKY),  1, 2
-    pat_er    PAT_DOGS,               R2PLUSW(R_ICE,  R_STRAWBRY), 0, 1
-    pat_er    PAT_DOGS,               R2PLUSW(R_SKY,  R_GRN),  0, 1
-    pat_er    PAT_TNM_USER2,          R2PLUSW(R_BLZ,  R_SKY),  0, 4
-    pat_er    PAT_CONSUMMATE_VS,      R2PLUSW(R_YEL,  R_SKY),  1, 2
-    pat_er    PAT_CONSUMMATE_VS,      R2PLUSW(R_FIRE, R_ICE),  0, 1
-    pat_er    PAT_CONSUMMATE_VS,      R2PLUSW(R_SKY,  R_WHT),  0, 1
-    pat_er    PAT_CHEQUER_2,          R2PLUSW(R_GRN1, R_BLU1), 1, 3
-    pat_er    PAT_CHEQUER_2,          R2PLUSW(R_RED,  R_YEL),  0, 3
-  endpattable
-
-  pattable 5
-    ; Two colour ramps, Set A
-    pat_er    PAT_WEAVE,          R2PLUSW(R_FIRE, R_ICE),  0, 2
-    pat_er    PAT_WEAVE,          R2PLUSW(R_ICE,  R_STRAWBRY), 0, 1
-    pat_er    PAT_WEAVE,          R2PLUSW(R_TIEDYED_A, R_TIEDYED_B), 0, 2
-    pat_er    PAT_WEAVE,          R2PLUSW(R_SKY,  R_SKY),  0, 2
-    pat_er    PAT_SOFT_FLASH,     R2PLUSW(R_BLURPLE, R_BLURPLE), 0, 2
-    pat_er    PAT_SOFT_FLASH,     R2PLUSW(R_SGR,  R_SGR),  0, 1
-    pat_er    PAT_SOFT_FLASH,     R2PLUSW(R_GOLD, R_WHT),  0, 2
-    pat_er    PAT_SOFT_FLASH,     R2PLUSW(R_FIRE, R_ICE),  0, 1
-    pat_er    PAT_SOFT_FLASH,     R2PLUSW(R_ARC,  R_ARC),  0, 1
-    pat_er    PAT_SOFT_DOGS,      R2PLUSW(R_TIEDYED_A, R_TIEDYED_B), 0, 4
-    pat_er    PAT_SOFT_DOGS,      R2PLUSW(R_BLURPLE, R_BLURPLE), 0, 4
-    pat_er    PAT_SOFT_DOGS,      R2PLUSW(R_ICE,  R_STRAWBRY), 0, 4
-    pat_er    PAT_SOFT_DOGS,      R2PLUSW(R_SKY,  R_WHT),  0, 1
-    pat_er    PAT_SOFT_DOGS,      R2PLUSW(R_FIRE, R_ICE),  0, 1
-    pat_er    PAT_RIM_WTD_SOLID,  R2PLUSW(R_YEL,  R_SKY),  0, 1
-    pat_er    PAT_RIM_WTD_SOLID,  R2PLUSW(R_ICE,  R_ICE),  0, 1
-    pat_er    PAT_RIM_WTD_SOLID,  R2PLUSW(R_MINT, R_MINT), 0, 1
-    pat_er    PAT_RIM_WTD_SOLID,  R2PLUSW(R_BLURPLE, R_BLURPLE), 0, 1
-    pat_er    PAT_WAVY_SPOKES,    R2PLUSW(R_FIRE, R_ICE),  0, 1
-    pat_er    PAT_WAVY_SPOKES,    R2PLUSW(R_RED,  R_CER),  0, 1
-    pat_er    PAT_WAVY_SPOKES,    R2PLUSW(R_BLU,  R_SKY),  0, 1
-    pat_er    PAT_WAVY_SPOKES,    R2PLUSW(R_SGR,  R_SGR),  0, 1
-    pat_er    PAT_WAVY_SPOKES,    R2PLUSW(R_BLURPLE, R_BLURPLE), 0, 1
-    pat_er    PAT_WAVY_SPOKES,    R2PLUSW(R_SKY,  R_WHT),  0, 1
-  endpattable
-
-  pattable 6
-    ; Two colour ramps, Set B
-    pat_er    PAT_LUM_CRAWL,      R2PLUSW(R_FIRE, R_ICE),  0, 1
-    pat_er    PAT_LUM_CRAWL,      R2PLUSW(R_BLURPLE, R_BLURPLE), 0, 1
-    pat_er    PAT_LUM_CRAWL,      R2PLUSW(R_BLZ,  R_BLZ),  0, 1
-    pat_er    PAT_RIM_WTD_FLASH,  R2PLUSW(R_FIRE, R_ICE),  1, 2
-    pat_er    PAT_RIM_WTD_FLASH,  R2PLUSW(R_GOLD, R_WHT),  0, 1
-    pat_er    PAT_RIM_WTD_FLASH,  R2PLUSW(R_BLURPLE, R_BLURPLE), 0, 1
-    pat_er    PAT_RIM_WTD_FLASH,  R2PLUSW(R_ICE,  R_ICE),  0, 1
-    pat_er    PAT_BOOKENDS,       R2PLUSW(R_FIRE, R_ICE),  0, 1
-    pat_er    PAT_BOOKENDS,       R2PLUSW(R_ICE,  R_STRAWBRY), 0, 1
-    pat_er    PAT_CHEVRONS,       R2PLUSW(R_SKY,  R_WHT),  0, 1
-    pat_er    PAT_CHEVRONS,       R2PLUSW(R_GOLD, R_WHT),  0, 1
-    pat_er    PAT_CHEVRONS,       R2PLUSW(R_RED_MIST, R_RED_MIST), 0, 1
-    pat_er    PAT_CHEVRONS,       R2PLUSW(R_BUNSEN, R_BUNSEN), 0, 1
-    pat_er    PAT_CHEVRONS,       R2PLUSW(R_RED,  R_WHT),  0, 1
-    pat_er    PAT_BLUR_STEP,      R2PLUSW(R_SKY,  R_WHT),  0, 1
-    pat_er    PAT_BLUR_STEP,      R2PLUSW(R_GOLD, R_WHT),  0, 1
-    pat_er    PAT_INTENSE_DECAY,  R2PLUSW(R_VIO,  R_VIO),  0, 2
-    pat_er    PAT_INTENSE_DECAY,  R2PLUSW(R_FIRE, R_ICE),  0, 2
-    pat_er    PAT_INTENSE_DECAY,  R2PLUSW(R_BUNSEN, R_BUNSEN), 0, 2
-    pat_er    PAT_SPOKES2,        R2PLUSW(R_BLZ,  R_SKY),  1, 1
-    pat_er    PAT_SPOKES2,        R2PLUSW(R_YEL,  R_SKY),  0, 1
-  endpattable
-
-  pattable 7
-    ; Miscellaneous
-    pat_fixed PAT_BY_YOUR_COMMAND,  0, 1
-    pat_er    PAT_AWL,          TRIPLICATE(R_RED),  0, 1
-    pat_fixed PAT_SQUARES_FIXED5,  0, 4
-    pat_fixed PAT_QUANTUM_SLALOM_F6,  0, 2
-    pat_fixed PAT_TERMINALS_FIXED6,  0, 2
-    pat_fixed PAT_TRIANGLES_NEAR_ME,  0, 4
-    pat_er    PAT_SLIDES,       R2PLUSW(R_BLZ,  R_SKY),  2, 1
-    pat_er    PAT_SLIDES,       R2PLUSW(R_SKY,  R_GRN),  2, 1
-    if INCLUDE_MORSE
-      pat_er    PAT_MORSE,      R2PLUSW(R_GRN,  R_GRN),  0, 2
-      pat_er    PAT_MORSE,      R2PLUSW(R_STRAWBRY, R_STRAWBRY), 2, 4
-      pat_er    PAT_MORSE,      R2PLUSW(R_FIRE, R_FIRE), 3, 4
-    endif
+  pattable 11
+    ; Colour ramps as tricolours, Set B
+    pat_er    PAT_HUB_WTD_PACKED1,    R_STRAWBRY, 0,  0,      0, 1
+    pat_er    PAT_HUB_WTD_PACKED2,    R_FIRE, R_ICE,  0,      1, 4
+    pat_er    PAT_HUB_WTD_PACKED2,    R_BLU1, R_SKY,  0,      0, 3
+    pat_er    PAT_HUB_WTD_PACKED3,    R_GRN,  R_BLU1, R_ORA,  1, 3
+    pat_er    PAT_HUB_WTD_PACKED3,    R_RED,  R_WHT,  R_BLU1, 0, 2
+    pat_er    PAT_HUB_WTD_SPACED3,    R_BLU,  R_YEL,  R_CER,  1, 3
+    pat_er    PAT_HUB_WTD_SPACED3,    R_PUR,  R_WHT,  R_PUR,  0, 2
+    pat_er    PAT_HUB_WTD_FLASH1,     R_BLURPLE, 0,   0,      1, 4
+    pat_er    PAT_HUB_WTD_FLASH1,     R_CER,  0,      0,      0, 2
+    pat_er    PAT_HUB_WTD_FLASH2,     R_GOLD, R_WHT,  0,      1, 3
+    pat_er    PAT_HUB_WTD_FLASH2,     R_SKY,  R_CER,  0,      0, 2
+    pat_er    PAT_HUB_WTD_FLASH3,     R_RED1, R_WHT,  R_GRN1, 1, 3
+    pat_er    PAT_HUB_WTD_FLASH3,     R_BLZ,  R_WHT,  R_SKY,  0, 2
+    pat_er    PAT_INTERDIGITATION_S,  R_VIO,  R_ORA,  0,      1, 3
+    pat_er    PAT_INTERDIGITATION_S,  R_YEL,  R_CYN,  0,      0, 2
+    pat_er    PAT_RAMP_UP2,           R_FIRE, R_ICE,  0,      0, 3
+    pat_er    PAT_RAMP_UP3,           R_RED,  R_GRN,  R_BLU,  0, 2
+    pat_er    PAT_FAT_WAVE_IN,        R_STRAWBRY, 0,  0,      2, 2
+    pat_er    PAT_FAT_WAVE_IN,        R_GOLD, 0,      0,      1, 4
+    pat_er    PAT_FAT_WAVE_IN,        R_BUNSEN, 0,    0,      0, 4
+    pat_er    PAT_WAVE_IN,            R_MINT, 0,      0,      2, 2
+    pat_er    PAT_WAVE_IN,            R_FIRE, 0,      0,      1, 4
+    pat_er    PAT_WAVE_IN,            R_ICE,  0,      0,      0, 4
   endpattable
 
 
@@ -7340,16 +9697,20 @@ pat_er macro pat_id, rampa, rampb, rampc, fupscaler, fup
 
 
 PM_BankTable:
-        dw  NUM_BANKS
-        dw  PM_PatTable_Bank0  ; Rainbows and solid colours
-        dw  PM_PatTable_Bank1  ; Tricolours - Concentric
-        dw  PM_PatTable_Bank2  ; Tricolours - Chasers and radial bars
-        dw  PM_PatTable_Bank3  ; One colour
-        dw  PM_PatTable_Bank4  ; Two colours
-        dw  PM_PatTable_Bank5  ; Two colour ramps, Set A
-        dw  PM_PatTable_Bank6  ; Two colour ramps, Set B
-        dw  PM_PatTable_Bank7  ; Miscellaneous
-NUM_BANKS equ ($ - PM_BankTable - 1)
+  banktable
+    patbank PM_PatTable_Bank0  ; Rainbows and solid colours
+    patbank PM_PatTable_Bank1  ; Pyromania
+    patbank PM_PatTable_Bank2  ; One flat colour
+    patbank PM_PatTable_Bank3  ; Two or three flat colours, Set A
+    patbank PM_PatTable_Bank4  ; Two or three flat colours, Set B
+    patbank PM_PatTable_Bank5  ; Two or three colour ramps, Set A
+    patbank PM_PatTable_Bank6  ; Two or three colour ramps, Set B
+    patbank PM_PatTable_Bank7  ; Miscellaneous
+    patbank PM_PatTable_Bank8  ; Tricolours - Concentric
+    patbank PM_PatTable_Bank9  ; Tricolours - Chasers and radial bars
+    patbank PM_PatTable_Bank10 ; Colour ramps as tricolours, Set A
+    patbank PM_PatTable_Bank11 ; Colour ramps as tricolours, Set B
+  endbanktable
 
 
 ;------------------------------------------------------------------------------
@@ -7367,8 +9728,8 @@ PM_SlideshowIntvTable:
 Pages1to3CodeEnd:
 Pages1to3WordsUsed = Pages1to3CodeEnd - 0x0800
 Pages1to3WordsFree = 0x2000 - Pages1to3CodeEnd
- if Pages1to3WordsFree < 0x0800
-   error "Less than 512 words free!"
+ if Pages1to3WordsFree < 0x0100
+   messg "Less than 256 words of Program Memory free!"
  endif
 
 ;------------------------------------------------------------------------------
