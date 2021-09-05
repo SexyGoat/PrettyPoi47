@@ -29,10 +29,8 @@ Introduction
 PrettyPoi47 is basically PrettyPoi27 enhanced to make use of the extra Program
 Memory on the PIC16F1847 on the later variants of the Ninja Poi. Lots of weird
 technical design decisions intended to save space on the smaller PIC16F1827 no
-longer apply. One feature enchancement is the user-selectable option to prevent
-the addition of a new entry to a full Favouite Patterns list.
-
-[In development: Two independent colour ramps instead of a selection of pairs]
+longer apply. Enhancements include flame effects and a pattern adjustment mode
+for adjusting the tempo and selecting up to three colour ramps.
 
 
 -------------------------------------------------------------------------------
