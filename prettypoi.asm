@@ -5,7 +5,7 @@
 
 
 ; PrettyPoi47 firmware for Ninja LED stick poi
-; Version: 0.9.5.0
+; Version: 0.9.6.0
 ; (c) Copyright 2021, Daniel Neville
 
 
@@ -6543,6 +6543,22 @@ PM_Pat_Alternate:
         pf16c     1,   4,  4,  4
         endbab
 
+PM_Pat_AltSpaced2:
+        pattern PATDF_16C, DEF_RL, 3, PATSF_BAPM_PMF, 4
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, PM_Frs_AltSpaced
+PM_Pat_AltSpaced3:
+        pattern PATDF_16C, DEF_RL, 3, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, PM_Frs_AltSpaced
+PM_Frs_AltSpaced:
+        bablock
+        pf16c     3,   1,  1,  1
+        pf16c     1,   0,  0,  0
+        pf16c     3,   4,  4,  4
+        pf16c     1,   0,  0,  0
+        pf16c     3,   7,  7,  7
+        pf16c     1,   0,  0,  0
+        endbab
+
 PM_Pat_JammyBattenberg:
         pattern PATDF_16C, DEF_RL, 12, PATSF_BAPM_PMF, 2
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
@@ -7720,52 +7736,88 @@ PM_Pat_Slides:
         pf16c     1,   2,  1,  1
         endbab
 
-PM_Pat_WaveOut:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 4
+PM_Pat_RampUpOut:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 3
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf16c     1,   1,  2,  3
-        pf16c     1,   2,  1,  2
-        pf16c     1,   3,  2,  1
-        pf16c     1,   2,  3,  2
+        pf16c     1,   3,  1,  2
+        pf16c     1,   2,  3,  1
         endbab
 
-PM_Pat_WaveIn:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 4
+PM_Pat_RampUpIn:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 3
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
         pf16c     1,   3,  2,  1
-        pf16c     1,   2,  1,  2
-        pf16c     1,   1,  2,  3
-        pf16c     1,   2,  3,  2
+        pf16c     1,   2,  1,  3
+        pf16c     1,   1,  3,  2
         endbab
 
-PM_Pat_FatWaveOut:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 8
+PM_Pat_FatRampUpOut:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 6
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
+        pf16c     1,   2,  3,  3
+        pf16c     1,   2,  2,  3
         pf16c     1,   1,  2,  2
         pf16c     1,   1,  1,  2
+        pf16c     1,   3,  1,  1
+        pf16c     1,   3,  3,  1
+        endbab
+
+PM_Pat_FatRampUpIn:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   3,  3,  2
+        pf16c     1,   3,  2,  2
+        pf16c     1,   2,  2,  1
+        pf16c     1,   2,  1,  1
+        pf16c     1,   1,  1,  3
+        pf16c     1,   1,  3,  3
+        endbab
+
+PM_Pat_RampDownOut:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 3
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   3,  2,  1
+        pf16c     1,   1,  3,  2
+        pf16c     1,   2,  1,  3
+        endbab
+
+PM_Pat_RampDownIn:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 3
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  2,  3
+        pf16c     1,   2,  3,  1
+        pf16c     1,   3,  1,  2
+        endbab
+
+PM_Pat_FatRampDownOut:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
         pf16c     1,   2,  1,  1
         pf16c     1,   2,  2,  1
         pf16c     1,   3,  2,  2
         pf16c     1,   3,  3,  2
-        pf16c     1,   2,  3,  3
-        pf16c     1,   2,  2,  3
+        pf16c     1,   1,  3,  3
+        pf16c     1,   1,  1,  3
         endbab
 
-PM_Pat_FatWaveIn:
-        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 8
+PM_Pat_FatRampDownIn:
+        pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 6
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
         bablock
-        pf16c     1,   2,  2,  1
-        pf16c     1,   2,  1,  1
         pf16c     1,   1,  1,  2
         pf16c     1,   1,  2,  2
         pf16c     1,   2,  2,  3
         pf16c     1,   2,  3,  3
-        pf16c     1,   3,  3,  2
-        pf16c     1,   3,  2,  2
+        pf16c     1,   3,  3,  1
+        pf16c     1,   3,  1,  1
         endbab
 
 PM_Pat_AlienCircuitry:
@@ -9135,13 +9187,19 @@ PM_PatAddrTable:
   enumdat PAT_RAMP_UP3,           dw, PM_Pat_RampUp3
   enumdat PAT_RAMP_DOWN2,         dw, PM_Pat_RampDown2
   enumdat PAT_RAMP_DOWN3,         dw, PM_Pat_RampDown3
-  enumdat PAT_WAVE_OUT,           dw, PM_Pat_WaveOut
-  enumdat PAT_WAVE_IN,            dw, PM_Pat_WaveIn
-  enumdat PAT_FAT_WAVE_OUT,       dw, PM_Pat_FatWaveOut
-  enumdat PAT_FAT_WAVE_IN,        dw, PM_Pat_FatWaveIn
+  enumdat PAT_RAMP_UP_OUT,        dw, PM_Pat_RampUpOut
+  enumdat PAT_RAMP_UP_IN,         dw, PM_Pat_RampUpIn
+  enumdat PAT_FAT_RAMP_UP_OUT,    dw, PM_Pat_FatRampUpOut
+  enumdat PAT_FAT_RAMP_UP_IN,     dw, PM_Pat_FatRampUpIn
+  enumdat PAT_RAMP_DOWN_OUT,      dw, PM_Pat_RampDownOut
+  enumdat PAT_RAMP_DOWN_IN,       dw, PM_Pat_RampDownIn
+  enumdat PAT_FAT_RAMP_DOWN_OUT,  dw, PM_Pat_FatRampDownOut
+  enumdat PAT_FAT_RAMP_DOWN_IN,   dw, PM_Pat_FatRampDownIn
   enumdat PAT_INTERDIGITATION_P,  dw, PM_Pat_InterdigitationP
   enumdat PAT_INTERDIGITATION_S,  dw, PM_Pat_InterdigitationS
   enumdat PAT_ALTERNATE,          dw, PM_Pat_Alternate
+  enumdat PAT_ALT_SPACED2,        dw, PM_Pat_AltSpaced2
+  enumdat PAT_ALT_SPACED3,        dw, PM_Pat_AltSpaced3
   enumdat PAT_JAMMY_BATTENBERG,   dw, PM_Pat_JammyBattenberg
   enumdat PAT_SOFT_FLASH2,        dw, PM_Pat_SoftFlash2
   enumdat PAT_SOFT_FLASH3,        dw, PM_Pat_SoftFlash3
@@ -9379,11 +9437,12 @@ patbank macro bankaddr
     pat_er    PAT_FLASH2,           R_RED,  R_CER,  0,      0, 3
     pat_er    PAT_FLASH3,           R_GRN,  R_BLU1, R_ORA,  1, 2
     pat_er    PAT_FLASH3,           R_YEL,  R_SKY,  R_RED,  0, 2
-    pat_er    PAT_ALTERNATE,        R_YEL,  R_RED1, 0,      1, 6
-    pat_er    PAT_ALTERNATE,        R_BLU1, R_SNT,  0,      1, 4
-    pat_er    PAT_ALTERNATE,        R_RED,  R_SKY,  0,      0, 5
-    pat_er    PAT_RAD_CON,          R_SKY,  R_BLZ,  0,      0, 2
-    pat_er    PAT_RAD_CON,          R_WHT,  R_GRN1, 0,      1, 1
+    pat_er    PAT_ALTERNATE,        R_YEL,  R_RED1, 0,      1, 5
+    pat_er    PAT_ALTERNATE,        R_BLU1, R_SNT,  0,      0, 5
+    pat_er    PAT_ALT_SPACED2,      R_YEL,  R_WHT,  0,      1, 3
+    pat_er    PAT_ALT_SPACED2,      R_RED,  R_GRN1, 0,      0, 3
+    pat_er    PAT_ALT_SPACED3,      R_RED,  R_GRN,  R_BLU,  1, 2
+    pat_er    PAT_ALT_SPACED3,      R_RED,  R_WHT,  R_GRN1, 0, 3
     pat_er    PAT_SQUARES_USER2,    R_RED,  R_WHT,  0,      0, 4
     pat_er    PAT_SQUARES_USER3,    R_GRN,  R_ORA,  R_SKY,  0, 4
     pat_er    PAT_QUANTUM_SLALOM_U2,R_CER,  R_GRN,  R_WHT,  0, 2
@@ -9406,6 +9465,8 @@ patbank macro bankaddr
     pat_er    PAT_DOGS,             R_YEL,  R_SKY,  0,      0, 3
     pat_er    PAT_DOGS,             R_CYN,  R_CER,  0,      0, 2
     pat_er    PAT_DOGS,             R_SNT,  R_RED1, 0,      0, 1
+    pat_er    PAT_RAD_CON,          R_SKY,  R_BLZ,  0,      0, 2
+    pat_er    PAT_RAD_CON,          R_WHT,  R_GRN1, 0,      1, 1
     pat_er    PAT_TNM_USER2,        R_BLZ,  R_SKY,  0,      0, 4
     pat_er    PAT_TNM_USER3,        R_BLU1, R_YEL,  R_CER,  0, 3
     pat_er    PAT_CONSUMMATE_VS,    R_YEL,  R_SKY,  0,      1, 2
@@ -9654,15 +9715,13 @@ patbank macro bankaddr
     pat_er    PAT_RIM_WTD_FLASH3,     R_RED1, R_WHT,  R_GRN1, 1, 3
     pat_er    PAT_RIM_WTD_FLASH3,     R_BLZ,  R_WHT,  R_SKY,  0, 2
     pat_er    PAT_INTERDIGITATION_P,  R_VIO,  R_ORA,  0,      1, 3
-    pat_er    PAT_INTERDIGITATION_P,  R_YEL,  R_CYN,  0,      0, 2
+    pat_er    PAT_INTERDIGITATION_P,  R_YEL,  R_CYN,  0,      0, 3
     pat_er    PAT_RAMP_DOWN2,         R_FIRE, R_ICE,  0,      0, 3
     pat_er    PAT_RAMP_DOWN3,         R_RED,  R_GRN,  R_BLU,  0, 2
-    pat_er    PAT_FAT_WAVE_OUT,       R_STRAWBRY, 0,  0,      2, 2
-    pat_er    PAT_FAT_WAVE_OUT,       R_GOLD, 0,      0,      1, 4
-    pat_er    PAT_FAT_WAVE_OUT,       R_BUNSEN, 0,    0,      0, 4
-    pat_er    PAT_WAVE_OUT,           R_MINT, 0,      0,      2, 2
-    pat_er    PAT_WAVE_OUT,           R_FIRE, 0,      0,      1, 4
-    pat_er    PAT_WAVE_OUT,           R_ICE,  0,      0,      0, 4
+    pat_er    PAT_FAT_RAMP_DOWN_OUT,  R_GOLD, 0,      0,      0, 2
+    pat_er    PAT_FAT_RAMP_DOWN_IN,   R_MINT, 0,      0,      0, 2
+    pat_er    PAT_RAMP_DOWN_OUT,      R_STRAWBRY, 0,  0,      0, 3
+    pat_er    PAT_RAMP_DOWN_IN,       R_ICE,  0,      0,      0, 3
   endpattable
 
   pattable 11
@@ -9684,12 +9743,10 @@ patbank macro bankaddr
     pat_er    PAT_INTERDIGITATION_S,  R_YEL,  R_CYN,  0,      0, 2
     pat_er    PAT_RAMP_UP2,           R_FIRE, R_ICE,  0,      0, 3
     pat_er    PAT_RAMP_UP3,           R_RED,  R_GRN,  R_BLU,  0, 2
-    pat_er    PAT_FAT_WAVE_IN,        R_STRAWBRY, 0,  0,      2, 2
-    pat_er    PAT_FAT_WAVE_IN,        R_GOLD, 0,      0,      1, 4
-    pat_er    PAT_FAT_WAVE_IN,        R_BUNSEN, 0,    0,      0, 4
-    pat_er    PAT_WAVE_IN,            R_MINT, 0,      0,      2, 2
-    pat_er    PAT_WAVE_IN,            R_FIRE, 0,      0,      1, 4
-    pat_er    PAT_WAVE_IN,            R_ICE,  0,      0,      0, 4
+    pat_er    PAT_FAT_RAMP_UP_OUT,    R_GOLD, 0,      0,      0, 2
+    pat_er    PAT_FAT_RAMP_UP_IN,     R_MINT, 0,      0,      0, 2
+    pat_er    PAT_RAMP_UP_OUT,        R_STRAWBRY, 0,  0,      0, 3
+    pat_er    PAT_RAMP_UP_IN,         R_ICE,  0,      0,      0, 3
   endpattable
 
 
