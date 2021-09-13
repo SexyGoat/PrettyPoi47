@@ -5,7 +5,7 @@
 
 
 ; PrettyPoi47 firmware for Ninja LED stick poi
-; Version: 0.9.6.0
+; Version: 0.9.6.1
 ; (c) Copyright 2021, Daniel Neville
 
 
@@ -6111,22 +6111,22 @@ NUM_RAMPS equ ENUMIX
 BAPM_Pal_Ramp16_Flame:
 ; Realistic, slightly pastel orange flame
         bablock
-        dbvrgb  0x000000
-        dbvrgb  0x010000
-        dbvrgb  0x010000
-        dbvrgb  0x030000
-        dbvrgb  0x060000
-        dbvrgb  0x080000
-        dbvrgb  0x0A0000
-        dbvrgb  0x100100
-        dbvrgb  0x210400
-        dbvrgb  0x370800
-        dbvrgb  0x4F0D01
-        dbvrgb  0x691402
-        dbvrgb  0x871F03
-        dbvrgb  0xA32B05
-        dbvrgb  0xBA3607
-        dbvrgb  0xCC3F09
+        dbargb  0x000000
+        dbargb  0x010000
+        dbargb  0x010000
+        dbargb  0x030000
+        dbargb  0x060000
+        dbargb  0x080000
+        dbargb  0x0A0000
+        dbargb  0x100100
+        dbargb  0x210400
+        dbargb  0x370800
+        dbargb  0x4F0D01
+        dbargb  0x691402
+        dbargb  0x871F03
+        dbargb  0xA32B05
+        dbargb  0xBA3607
+        dbargb  0xCC3F09
         endbab
 
 BAPM_Pal_Ramp16_Blaze:
@@ -9281,6 +9281,7 @@ PM_PatAddrTable:
     enumdat PAT_MORSE,            dw, PM_Pat_Morse
     enumdat PAT_SMORSE,           dw, PM_Pat_SMorse
   endif
+NUM_PATTERNS equ ENUMIX
 
 
 ;------------------------------------------------------------------------------
@@ -9395,15 +9396,15 @@ patbank macro bankaddr
 
   pattable 1
     ; Pyromania
-    pat_er    PAT_HQ_HUB_BRAZIER,   R16_FLAME,   0, 0,  1, 3
-    pat_er    PAT_HQ_MID_BRAZIER,   R16_FLAME,   0, 0,  1, 3
-    pat_er    PAT_HQ_RIM_BRAZIER,   R16_FLAME,   0, 0,  1, 3
-    pat_er    PAT_HQ_HUB_BRAZIER,   R16_BLAZE,   0, 0,  1, 3
-    pat_er    PAT_HQ_MID_BRAZIER,   R16_BLAZE,   0, 0,  1, 3
-    pat_er    PAT_HQ_RIM_BRAZIER,   R16_BLAZE,   0, 0,  1, 3
-    pat_er    PAT_HQ_HUB_BRAZIER,   R16_FLURPLE, 0, 0,  0, 6
-    pat_er    PAT_HQ_MID_BRAZIER,   R16_FLURPLE, 0, 0,  0, 6
-    pat_er    PAT_HQ_RIM_BRAZIER,   R16_FLURPLE, 0, 0,  0, 6
+    pat_er    PAT_HQ_HUB_BRAZIER,   R16_BLAZE,   0, 0,  1, 2
+    pat_er    PAT_HQ_MID_BRAZIER,   R16_BLAZE,   0, 0,  1, 2
+    pat_er    PAT_HQ_RIM_BRAZIER,   R16_BLAZE,   0, 0,  1, 2
+    pat_er    PAT_HQ_HUB_BRAZIER,   R16_FLAME,   0, 0,  0, 3
+    pat_er    PAT_HQ_MID_BRAZIER,   R16_FLAME,   0, 0,  0, 3
+    pat_er    PAT_HQ_RIM_BRAZIER,   R16_FLAME,   0, 0,  0, 3
+    pat_er    PAT_HQ_HUB_BRAZIER,   R16_FLURPLE, 0, 0,  0, 3
+    pat_er    PAT_HQ_MID_BRAZIER,   R16_FLURPLE, 0, 0,  0, 3
+    pat_er    PAT_HQ_RIM_BRAZIER,   R16_FLURPLE, 0, 0,  0, 3
     pat_er    PAT_HUB_BRAZIER,      R_MINT,      0, 0,  1, 6
     pat_er    PAT_MID_BRAZIER,      R_MINT,      0, 0,  1, 6
     pat_er    PAT_RIM_BRAZIER,      R_MINT,      0, 0,  1, 6
