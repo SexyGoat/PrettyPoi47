@@ -13,7 +13,7 @@ D = [
   (0x008899, "CYN", "Cyan"),
   (0x003799, "SKY", "Sky Blue"),
   (0x0000BB, "BLU", "Blue"),
-  (0x4800CC, "PUR", "Purple"),
+  (0x2A00BB, "PUR", "Purple"),
   (0x7000C4, "VIO", "Violet"),
   (0xAA0090, "MAG", "Magenta"),
   (0xD2002C, "CER", "Cerise"),
@@ -104,7 +104,8 @@ def main():
     ("ORA3",  0x040100, "Darkest Orange"),
     ("GRN3",  0x000400, "Darkest Green"),
     ("BLU3",  0x000004, "Darkest Blue"),
-    ("PUR3",  0x020005, "Darkest Purple"),
+    ("PUR3",  0x010004, "Darkest Purple"),
+    ("VIO3",  0x030005, "Darkest Violet"),
   ]:
     cmmtfield = ["",": "][desc != ""] + desc
     print(fmt.format(enumname + ",", x, clix, cmmtfield))

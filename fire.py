@@ -435,26 +435,18 @@ def main():
 
   pal_flame = [  # Realistic slightly pastel orange flame
     0,
-    0x050000,
-    0x170200,
-    0x701602,
-    0xCC3F09,
+    0x080200,  # 0x050000,
+    0x1A0600,  # 0x170200,
+    0x701602,  # 0x701602,
+    0xCC3F09,  # 0xCC3F09,
   ]
 
-  pal_flurple = [  # Blurple flame
+  pal_blaze = [  # Based roughly on the standard Fire colour ramp
     0,
-    0x000004,
-    0x000016,
-    0x0D006B,
-    0x5500CC,
-  ]
-
-  pal_blaze = [  # Based on the standard Fire colour ramp
-    0,
-    0x040000,
-    0x100000,
-    0x780B00,
-    0xE02D00,
+    0x060000,  # 0x040000,
+    0x190300,  # 0x100000,
+    0x780C00,  # 0x780B00,
+    0xE02D00,  # 0xE02D00,
   ]
 
   pal_redfire = [  # Based on the standard Fire colour ramp
@@ -465,12 +457,12 @@ def main():
     0xDA1A00,
   ]
 
-  pal_strawberry = [  # Strawberry fire
+  pal_flurple = [  # Blurple flame
     0,
-    0x060000,
-    0x1A0000,
-    0x800615,
-    0xCC3342,
+    0x000004,
+    0x000016,
+    0x0D006B,
+    0x5500CC,
   ]
 
   pal_bunsen = [
@@ -479,6 +471,14 @@ def main():
     0x030017,
     0x000870,
     0x003A99,
+  ]
+
+  pal_strawberry = [  # Strawberry fire
+    0,
+    0x060000,
+    0x1A0000,
+    0x800615,
+    0xCC3342,
   ]
 
   pal_acrid = [

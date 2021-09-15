@@ -5,7 +5,7 @@
 
 
 ; PrettyPoi47 firmware for Ninja LED stick poi
-; Version: 0.9.6.1
+; Version: 0.9.7.0
 ; (c) Copyright 2021, Daniel Neville
 
 
@@ -4912,6 +4912,10 @@ _GetPA_PatIxZeroPlus:
         movwf   FSR0L
         movlw   HIGH(PM_PatAddrTable)
         movwf   FSR0H
+        movlw   NUM_PATTERNS
+        subwf   Scratch1, W
+        btfsc   STATUS, C
+        clrf    Scratch1
         movf    Scratch1, W
         call    FetchPMWordFromTable
         bsf     FSR0H, 7
@@ -5990,7 +5994,7 @@ BAPM_Pal_Basic:
   enumdat CYN,     dbargb, 0x008899  ; 12: Cyan
   enumdat SKY,     dbargb, 0x003799  ; 13: Sky Blue
   enumdat BLU,     dbargb, 0x0000BB  ; 14: Blue
-  enumdat PUR,     dbargb, 0x4800CC  ; 15: Purple
+  enumdat PUR,     dbargb, 0x2A00BB  ; 15: Purple
   enumdat VIO,     dbargb, 0x7000C4  ; 16: Violet
   enumdat MAG,     dbargb, 0xAA0090  ; 17: Magenta
   enumdat CER,     dbargb, 0xD2002C  ; 18: Cerise
@@ -6006,7 +6010,7 @@ BAPM_Pal_Basic:
   enumdat CYN1,    dbargb, 0x004C56  ; 27: Medium Cyan
   enumdat SKY1,    dbargb, 0x001F56  ; 28: Medium Sky Blue
   enumdat BLU1,    dbargb, 0x000069  ; 29: Medium Blue
-  enumdat PUR1,    dbargb, 0x280072  ; 30: Medium Purple
+  enumdat PUR1,    dbargb, 0x180069  ; 30: Medium Purple
   enumdat VIO1,    dbargb, 0x3F006E  ; 31: Medium Violet
   enumdat MAG1,    dbargb, 0x5F0051  ; 32: Medium Magenta
   enumdat CER1,    dbargb, 0x760019  ; 33: Medium Cerise
@@ -6022,7 +6026,7 @@ BAPM_Pal_Basic:
   enumdat CYN2,    dbargb, 0x000B0C  ; 42: Dark Cyan
   enumdat SKY2,    dbargb, 0x00040C  ; 43: Dark Sky Blue
   enumdat BLU2,    dbargb, 0x00000F  ; 44: Dark Blue
-  enumdat PUR2,    dbargb, 0x060010  ; 45: Dark Purple
+  enumdat PUR2,    dbargb, 0x03000F  ; 45: Dark Purple
   enumdat VIO2,    dbargb, 0x090010  ; 46: Dark Violet
   enumdat MAG2,    dbargb, 0x0E000C  ; 47: Dark Magenta
   enumdat CER2,    dbargb, 0x110004  ; 48: Dark Cerise
@@ -6038,8 +6042,8 @@ BAPM_Pal_Basic:
   enumdat ORA3,    dbargb, 0x040100  ; 57: : Darkest Orange
   enumdat GRN3,    dbargb, 0x000400  ; 58: : Darkest Green
   enumdat BLU3,    dbargb, 0x000004  ; 59: : Darkest Blue
-  enumdat VIO3,    dbargb, 0x030005  ; 59: : Darkest Blue
-  enumdat PUR3,    dbargb, 0x020005  ; 60: : Darkest Purple
+  enumdat PUR3,    dbargb, 0x010004  ; 60: : Darkest Purple
+  enumdat VIO3,    dbargb, 0x030005  ; 61: : Darkest Violet
   endbab
 BASIC_PALETTE_LENGTH equ ENUMIX
 
@@ -6076,8 +6080,8 @@ BAPM_ColourRamps:
   enumdat R_ORA1,       dbal, RAMP4(0, ORA1, ORA2, ORA3)
   enumdat R_GRN1,       dbal, RAMP4(0, GRN1, GRN2, GRN3)
   enumdat R_BLU1,       dbal, RAMP4(0, BLU1, BLU2, BLU3)
-  enumdat R_VIO1,       dbal, RAMP4(0, VIO1, VIO2, VIO3)
   enumdat R_PUR1,       dbal, RAMP4(0, PUR1, PUR2, PUR3)
+  enumdat R_VIO1,       dbal, RAMP4(0, VIO1, VIO2, VIO3)
   ; Chromatic aberrations
   enumdat R_FIRE,       dbal, RAMP4(0, ORA,  BLZ1, RED2)
   enumdat R_ICE,        dbal, RAMP4(0, CYN,  SKY1, BLU2)
@@ -6111,43 +6115,43 @@ NUM_RAMPS equ ENUMIX
 BAPM_Pal_Ramp16_Flame:
 ; Realistic, slightly pastel orange flame
         bablock
-        dbargb  0x000000
-        dbargb  0x010000
-        dbargb  0x010000
-        dbargb  0x030000
-        dbargb  0x060000
-        dbargb  0x080000
-        dbargb  0x0A0000
-        dbargb  0x100100
-        dbargb  0x210400
-        dbargb  0x370800
-        dbargb  0x4F0D01
-        dbargb  0x691402
-        dbargb  0x871F03
-        dbargb  0xA32B05
-        dbargb  0xBA3607
-        dbargb  0xCC3F09
+        dbvrgb  0x000000
+        dbvrgb  0x020000
+        dbvrgb  0x030100
+        dbvrgb  0x050100
+        dbvrgb  0x090200
+        dbvrgb  0x0C0300
+        dbvrgb  0x0D0300
+        dbvrgb  0x130500
+        dbvrgb  0x240800
+        dbvrgb  0x390B00
+        dbvrgb  0x500E01
+        dbvrgb  0x691402
+        dbvrgb  0x871E03
+        dbvrgb  0xA32B05
+        dbvrgb  0xBA3607
+        dbvrgb  0xCC3F09
         endbab
 
 BAPM_Pal_Ramp16_Blaze:
-; Based on the standard Fire colour ramp
+; Based roughly on the standard Fire colour ramp
         bablock
-        dbargb  0x000000
-        dbargb  0x010000
-        dbargb  0x010000
-        dbargb  0x020000
-        dbargb  0x050000
-        dbargb  0x050000
-        dbargb  0x040000
-        dbargb  0x090000
-        dbargb  0x1A0100
-        dbargb  0x310200
-        dbargb  0x490400
-        dbargb  0x660800
-        dbargb  0x891100
-        dbargb  0xAC1B00
-        dbargb  0xCA2500
-        dbargb  0xE02D00
+        dbvrgb  0x000000
+        dbvrgb  0x010000
+        dbvrgb  0x020000
+        dbvrgb  0x040000
+        dbvrgb  0x070000
+        dbvrgb  0x090100
+        dbvrgb  0x0B0100
+        dbvrgb  0x110200
+        dbvrgb  0x240400
+        dbvrgb  0x3B0500
+        dbvrgb  0x540700
+        dbvrgb  0x700A00
+        dbvrgb  0x921200
+        dbvrgb  0xB21C00
+        dbvrgb  0xCC2600
+        dbvrgb  0xE02D00
         endbab
 
 BAPM_Pal_Ramp16_RedFire:
@@ -7124,6 +7128,76 @@ BAPM_Frs_Spokes2or3:
         pf16c     1,   8,  0,  0
         endbab
 
+PM_Pat_Whales:
+        pattern PATDF_4C, 4, 3, PATSF_BAPM_PMF, 6
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf4c      1,   1,  1,  1
+        pf4c      2,   1,  0,  1
+        pf4c      2,   1,  0,  0
+        pf4c      1,   1,  1,  1
+        pf4c      4,   0,  0,  1
+        pf4c      2,   0,  0,  0
+        endbab
+
+PM_Pat_SnakesInAPlane:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 16
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     2,   1,  0,  1
+        pf16c     2,   1,  0,  0
+        pf16c     1,   1,  1,  1
+        pf16c     2,   0,  0,  1
+        pf16c     2,   1,  0,  1
+        pf16c     1,   1,  1,  1
+        pf16c     2,   0,  0,  0
+        pf16c     1,   4,  4,  4
+        pf16c     2,   4,  0,  4
+        pf16c     2,   4,  0,  0
+        pf16c     1,   4,  4,  4
+        pf16c     2,   0,  0,  4
+        pf16c     2,   4,  0,  4
+        pf16c     1,   4,  4,  4
+        pf16c     2,   0,  0,  0
+        endbab
+
+PM_Pat_MirrorSnakes:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 16
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     2,   1,  0,  1
+        pf16c     2,   1,  0,  0
+        pf16c     1,   1,  1,  1
+        pf16c     2,   0,  0,  1
+        pf16c     2,   1,  0,  1
+        pf16c     1,   1,  1,  1
+        pf16c     2,   0,  0,  0
+        pf16c     1,   4,  4,  4
+        pf16c     2,   4,  0,  4
+        pf16c     2,   0,  0,  4
+        pf16c     1,   4,  4,  4
+        pf16c     2,   4,  0,  0
+        pf16c     2,   4,  0,  4
+        pf16c     1,   4,  4,  4
+        pf16c     2,   0,  0,  0
+        endbab
+
+PM_Pat_DoubleBars:
+        pattern PATDF_16C, DEF_RL, 3, PATSF_BAPM_PMF, 8
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   1,  1,  1
+        pf16c     1,   0,  0,  0
+        pf16c     1,   1,  1,  1
+        pf16c     2,   0,  0,  0
+        pf16c     1,   4,  4,  4
+        pf16c     1,   0,  0,  0
+        pf16c     1,   4,  4,  4
+        pf16c     2,   0,  0,  0
+        endbab
+
 PM_Pat_SpotsBars:
         pattern PATDF_16C, DEF_RL, 1, PATSF_BAPM_PMF, 8
         dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
@@ -7412,6 +7486,26 @@ PM_Pat_SoftBarberpole3S:
         pf16c     1,   1,  0,  0
         pf16c     1,   1,  3,  0
         pf16c     1,   1,  2,  0
+        endbab
+
+PM_Pat_FlashBarberpole:
+        pattern PATDF_16C, DEF_RL, 2, PATSF_BAPM_PMF, 14
+        dw BAPM_Pal_Basic, BAPM_Default_Ramps, 0
+        bablock
+        pf16c     1,   0,  6,  4
+        pf16c     1,   0,  5,  5
+        pf16c     1,   6,  4,  6
+        pf16c     1,   5,  5,  0
+        pf16c     1,   4,  6,  0
+        pf16c     1,   5,  0,  1
+        pf16c     1,   6,  0,  0
+        pf16c     1,   0,  1,  1
+        pf16c     1,   0,  0,  0
+        pf16c     1,   1,  1,  1
+        pf16c     1,   0,  0,  0
+        pf16c     1,   1,  1,  0
+        pf16c     1,   0,  0,  6
+        pf16c     1,   1,  0,  5
         endbab
 
 PM_Pat_WavySpokes2:
@@ -9230,6 +9324,10 @@ PM_PatAddrTable:
   enumdat PAT_SPOKES2,            dw, PM_Pat_Spokes2
   enumdat PAT_SPOKES3,            dw, PM_Pat_Spokes3
   enumdat PAT_SPOTS_BARS,         dw, PM_Pat_SpotsBars
+  enumdat PAT_WHALES,             dw, PM_Pat_Whales
+  enumdat PAT_SNAKES_IN_A_PLANE,  dw, PM_Pat_SnakesInAPlane
+  enumdat PAT_MIRROR_SNAKES,      dw, PM_Pat_MirrorSnakes
+  enumdat PAT_DOUBLE_BARS,        dw, PM_Pat_DoubleBars
   enumdat PAT_RAD_CON,            dw, PM_Pat_RadCon
   enumdat PAT_TWIST,              dw, PM_Pat_Twist
   enumdat PAT_PIED_CAT_NOSES,     dw, PM_Pat_PiedCatNoses
@@ -9244,6 +9342,7 @@ PM_PatAddrTable:
   enumdat PAT_SOFT_BARBERPOLE2,   dw, PM_Pat_SoftBarberpole2
   enumdat PAT_SOFT_BARBERPOLE3,   dw, PM_Pat_SoftBarberpole3
   enumdat PAT_SOFT_BARBERPOLE3S,  dw, PM_Pat_SoftBarberpole3S
+  enumdat PAT_FLASH_BARBERPOLE,   dw, PM_Pat_FlashBarberpole
   enumdat PAT_WAVY_SPOKES2,       dw, PM_Pat_WavySpokes2
   enumdat PAT_WAVY_SPOKES3,       dw, PM_Pat_WavySpokes3
   enumdat PAT_CHEVRONS2,          dw, PM_Pat_Chevrons2
@@ -9346,8 +9445,8 @@ NUM_BANKS equ ($ - PM_BankTable - 1)
   endif
   if NUM_BANKS > 15
     if NUM_RAMPS > 63
-      error "NUM_BANKS and NUM_BANKS must not both be at their maximums!"
-      ; When NUM_BANKS = 16 and NUM_BANKS = 64, it is possible for the user
+      error "NUM_BANKS and NUM_RAMPS must not both be at their maximums!"
+      ; When NUM_BANKS = 16 and NUM_RAMPS = 64, it is possible for the user
       ; to create a Favourite Pattern record that is all bit ones, which is
       ; the list terminator for the Favourites Patterns list.
     endif
@@ -9420,6 +9519,7 @@ patbank macro bankaddr
     pat_er    PAT_ZIGZAG,           R_CYN,  0,      0,      0, 1
     pat_er    PAT_FLASH1,           R_VIO,  0,      0,      1, 3
     pat_er    PAT_FLASH1,           R_SKY,  0,      0,      0, 2
+    pat_er    PAT_WHALES,           R_PNK,  0,      0,      0, 3
     pat_er    PAT_STEP,             R_GRN,  0,      0,      1, 3
     pat_er    PAT_STEP,             R_BLZ,  0,      0,      1, 2
     pat_er    PAT_STEP,             R_BLU,  0,      0,      0, 3
@@ -9438,6 +9538,8 @@ patbank macro bankaddr
     pat_er    PAT_FLASH2,           R_RED,  R_CER,  0,      0, 3
     pat_er    PAT_FLASH3,           R_GRN,  R_BLU1, R_ORA,  1, 2
     pat_er    PAT_FLASH3,           R_YEL,  R_SKY,  R_RED,  0, 2
+    pat_er    PAT_SNAKES_IN_A_PLANE,R_GRN,  R_ORA,  0,      0, 3
+    pat_er    PAT_MIRROR_SNAKES,    R_RED,  R_ORA,  0,      0, 3
     pat_er    PAT_ALTERNATE,        R_YEL,  R_RED1, 0,      1, 5
     pat_er    PAT_ALTERNATE,        R_BLU1, R_SNT,  0,      0, 5
     pat_er    PAT_ALT_SPACED2,      R_YEL,  R_WHT,  0,      1, 3
@@ -9466,8 +9568,9 @@ patbank macro bankaddr
     pat_er    PAT_DOGS,             R_YEL,  R_SKY,  0,      0, 3
     pat_er    PAT_DOGS,             R_CYN,  R_CER,  0,      0, 2
     pat_er    PAT_DOGS,             R_SNT,  R_RED1, 0,      0, 1
-    pat_er    PAT_RAD_CON,          R_SKY,  R_BLZ,  0,      0, 2
-    pat_er    PAT_RAD_CON,          R_WHT,  R_GRN1, 0,      1, 1
+    pat_er    PAT_DOUBLE_BARS,      R_WHT,  R_RED,  0,      0, 3
+    pat_er    PAT_RAD_CON,          R_SKY,  R_BLZ,  0,      1, 1
+    pat_er    PAT_RAD_CON,          R_WHT,  R_BLZ,  0,      0, 2
     pat_er    PAT_TNM_USER2,        R_BLZ,  R_SKY,  0,      0, 4
     pat_er    PAT_TNM_USER3,        R_BLU1, R_YEL,  R_CER,  0, 3
     pat_er    PAT_CONSUMMATE_VS,    R_YEL,  R_SKY,  0,      1, 2
@@ -9514,6 +9617,7 @@ patbank macro bankaddr
     pat_er    PAT_SOFT_BARBERPOLE2, R_RED,  R_WHT,  0,      0, 2
     pat_er    PAT_SOFT_BARBERPOLE3, R_FIRE, R_WHT,  R_ICE,  0, 2
     pat_er    PAT_SOFT_BARBERPOLE3S,R_STRAWBRY, R_WHT, R_STRAWBRY, 0, 1
+    pat_er    PAT_FLASH_BARBERPOLE, R_SKY,  R_STRAWBRY, 0,  0, 3
   endpattable
 
   pattable 6
